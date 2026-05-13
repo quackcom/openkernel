@@ -1,0 +1,28 @@
+# Git ignore patterns for openkernel
+
+# Build artifacts
+/build/
+*.o
+*.elf
+*.iso
+*.bin
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+*.exe
+
+# Temporary files
+*.tmp
+*.log
+
+# Excluded directories
+/lang-documentation/
