@@ -1,4 +1,4 @@
-/* openkernel Kernel Entry Point */
+﻿/* openkernel Kernel Entry Point */
 
 #include "kernel.h"
 #include "gdt.h"
@@ -39,6 +39,28 @@ static inline uint32_t asm_get_eflags(void)
 static uint16_t terminal_history[SCROLLBACK_SIZE][VGA_COLS];
 static int terminal_total_lines = 1;
 static int scroll_view_offset = 0; /* 0 = showing the latest lines */
+
+/* Text mode command buffer */
+#define CMD_BUFFER_SIZE 128
+static char cmd[CMD_BUFFER_SIZE];
+static int cmd_len = 0;
+static int cmd_cursor = 0;
+static int loading_status_active = 0;
+static int loading_status_line = -1;
+static uint32_t loading_status_frame = 0;
+static char loading_status_label[48];
+static int loading_status_progress = 0;      /* 0-100 percentuale per la progress bar */
+
+/* Saved boot information for os.bootinfo command */
+static uint32_t saved_magic = 0;
+static uint32_t saved_flags = 0;
+static uint32_t saved_mem_lower = 0;
+static uint32_t saved_mem_upper = 0;
+static char saved_boot_loader[64] = "";
+static int saved_boot_loader_valid = 0;
+
+static void vga_replace_line_text(int line, const char *text);
+static void render_loading_status(void);
 
 /* Update the hardware cursor (the blinking horizontal bar) */
 static void vga_update_hardware_cursor(void)
@@ -259,6 +281,11 @@ void memory_init(uint32_t mem_lower, uint32_t mem_upper);
 void process_init(void);
 void keyboard_detect_layout(const char* cmdline);
 extern int graphics_toggle_requested;
+extern volatile int arrow_left_requested;
+extern volatile int arrow_right_requested;
+extern volatile int arrow_up_requested;
+extern volatile int arrow_down_requested;
+extern volatile int delete_requested;
 int graphics_mode_active = 0;
 static int pseudo_text_mode_active = 0;
 
@@ -268,6 +295,15 @@ static char gfx_log[GFX_LOG_LINES][GFX_LOG_COLS];
 static int gfx_log_count = 0;
 static char pseudo_cmd[64];
 static int pseudo_cmd_len = 0;
+static int pseudo_cmd_cursor = 0;
+
+static void clear_gfx_log(void)
+{
+    for (int i = 0; i < GFX_LOG_LINES; i++) {
+        gfx_log[i][0] = '\0';
+    }
+    gfx_log_count = 0;
+}
 
 static void append_gfx_log(const char *msg)
 {
@@ -281,26 +317,58 @@ static void append_gfx_log(const char *msg)
     gfx_log_count++;
 }
 
+static void append_gfx_prompt_line(const char *command)
+{
+    char line[GFX_LOG_COLS];
+    int idx = 0;
+
+    line[idx++] = '>';
+    line[idx++] = ' ';
+
+    while (*command && idx < GFX_LOG_COLS - 1) {
+        line[idx++] = *command++;
+    }
+
+    line[idx] = '\0';
+    append_gfx_log(line);
+}
+
 static void render_pseudo_text_screen(void)
 {
+    const display_mode_t *mode = display_get_mode();
     display_clear(display_rgb(0, 0, 0x40));
-    display_puts("openkernel Text Console (graphics fallback)", 20, 20, display_rgb(0xFF, 0xFF, 0xFF));
-    display_puts("Commands: layout us|uk|it, reboot, shutdown", 20, 44, display_rgb(0xD0, 0xD0, 0xD0));
-    display_puts("Press Ctrl+T to return to graphics test mode", 20, 64, display_rgb(0xB0, 0xB0, 0xB0));
+    display_puts("openkernel Command Line", 20, 20, display_rgb(0xFF, 0xFF, 0xFF));
+    display_puts("Type 'help' for available commands.", 20, 40, display_rgb(0xA0, 0xA0, 0xA0));
 
     int lines = (gfx_log_count < GFX_LOG_LINES) ? gfx_log_count : GFX_LOG_LINES;
     int start = gfx_log_count - lines;
     for (int i = 0; i < lines; i++) {
         int idx = (start + i) % GFX_LOG_LINES;
-        display_puts(gfx_log[idx], 20, 94 + (uint32_t)i * 18, display_rgb(0xFF, 0xFF, 0xFF));
+        display_puts(gfx_log[idx], 20, 64 + (uint32_t)i * 18, display_rgb(0xFF, 0xFF, 0xFF));
     }
 
-    char prompt[80] = "> ";
-    int p = 2;
-    for (int i = 0; i < pseudo_cmd_len && p < 77; i++) prompt[p++] = pseudo_cmd[i];
-    prompt[p++] = '_'; /* typing bar */
+    /* Ensure prompt line is fully clean before drawing */
+    display_fill_rect(0, 558, mode->width, 20, display_rgb(0, 0, 0x40));
+
+    /* Build prompt with cursor marker at the correct position */
+    char prompt[80];
+    const char *prefix = "> ";
+    int p = 0;
+    while (*prefix && p < 79) prompt[p++] = *prefix++;
+
+    for (int i = 0; i < pseudo_cmd_len && p < 78; i++) {
+        if (i == pseudo_cmd_cursor) {
+            prompt[p++] = '_'; /* cursor marker */
+        }
+        prompt[p++] = pseudo_cmd[i];
+    }
+    if (pseudo_cmd_cursor >= pseudo_cmd_len && p < 79) {
+        prompt[p++] = '_'; /* cursor at end */
+    }
     prompt[p] = '\0';
+
     display_puts(prompt, 20, 560, display_rgb(0xFF, 0xFF, 0x80));
+    (void)mode;
 }
 
 static void render_graphics_test_screen(void)
@@ -339,9 +407,10 @@ static void loading_tick_inline(const char *component, int *frame)
 {
     const int total_steps = 5;
     int step = *frame + 1;
+    char bar[6];
+
     if (step > total_steps) step = total_steps;
 
-    char bar[6];
     for (int i = 0; i < total_steps; i++) {
         bar[i] = (i < step) ? '#' : '-';
     }
@@ -361,6 +430,235 @@ static int streq(const char *a, const char *b)
     return (*a == '\0' && *b == '\0');
 }
 
+static size_t kstrlen(const char *str)
+{
+    size_t len = 0;
+    while (str[len] != '\0') len++;
+    return len;
+}
+
+/* Extracts content between parentheses from a command.
+   Supports double-quoted strings: cmd.print("hello world")
+   Without quotes: extracts up to ')', no spaces
+   With quotes: strips the quotes and allows spaces in content
+   Returns 1 on success, 0 on malformed syntax. */
+static int extract_parenthesis_content(const char *command, char *out, int max_len)
+{
+    while (*command == ' ') command++;
+
+    while (*command && *command != '(') command++;
+    if (*command != '(') return 0;
+    command++; /* skip '(' */
+
+    /* Skip whitespace after opening paren */
+    while (*command == ' ') command++;
+
+    int len = 0;
+
+    if (*command == '"') {
+        /* Quoted string — extract until closing quote, allows spaces */
+        command++; /* skip opening " */
+        while (*command && *command != '"' && len < max_len - 1) {
+            out[len++] = *command++;
+        }
+        if (*command != '"') return 0; /* unclosed quote */
+        command++; /* skip closing " */
+    } else {
+        /* Unquoted — extract until ')' */
+        while (*command && *command != ')' && len < max_len - 1) {
+            out[len++] = *command++;
+        }
+    }
+
+    /* Skip trailing whitespace before closing paren */
+    while (*command == ' ') command++;
+    if (*command != ')') return 0;
+
+    out[len] = '\0';
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Loading-status animation with progress bar support.               */
+/*  I dots animati partono immediatamente (non dipendono dal timer).  */
+/*  La progress bar si riempie da 0% a 100% tramite                  */
+/*  loading_status_set_progress().                                    */
+/* ------------------------------------------------------------------ */
+void loading_status_start(const char *label)
+{
+    int idx = 0;
+
+    loading_status_active = 1;
+    loading_status_line = terminal_total_lines - 1;
+    loading_status_frame = 0;
+
+    while (label[idx] && idx < (int)sizeof(loading_status_label) - 1) {
+        loading_status_label[idx] = label[idx];
+        idx++;
+    }
+    loading_status_label[idx] = '\0';
+
+    /* Show the label immediately (no dots yet) */
+    render_loading_status();
+}
+
+void loading_status_tick(void)
+{
+    if (!loading_status_active) {
+        return;
+    }
+
+    loading_status_frame++;
+    render_loading_status();
+}
+
+void loading_status_set_progress(int percent)
+{
+    if (!loading_status_active) {
+        return;
+    }
+
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    loading_status_progress = percent;
+    render_loading_status();
+}
+
+void loading_status_done(void)
+{
+    if (!loading_status_active) {
+        return;
+    }
+
+    loading_status_active = 0;
+
+    /* Sovrascrivi la linea con [OK] invece di andare a capo */
+    char ok_line[80];
+    int pos = 0;
+    ok_line[pos++] = '[';
+    ok_line[pos++] = 'O';
+    ok_line[pos++] = 'K';
+    ok_line[pos++] = ']';
+    ok_line[pos++] = ' ';
+    for (int i = 0; loading_status_label[i] && pos < 79; i++) {
+        ok_line[pos++] = loading_status_label[i];
+    }
+    ok_line[pos] = '\0';
+    vga_replace_line_text(loading_status_line, ok_line);
+}
+
+static void vga_replace_line_text(int line, const char *text)
+{
+    int col = 0;
+
+    if (line < 0 || line >= SCROLLBACK_SIZE) {
+        return;
+    }
+
+    for (int j = 0; j < VGA_COLS; j++) {
+        terminal_history[line][j] = ' ' | (VGA_ATTR << 8);
+    }
+
+    while (*text && col < VGA_COLS) {
+        terminal_history[line][col++] = *text++ | (VGA_ATTR << 8);
+    }
+
+    cursor_col = (uint8_t)col;
+    vga_refresh();
+}
+
+static void render_loading_status(void)
+{
+    char line[80];
+    int pos = 0;
+
+    if (!loading_status_active || loading_status_line < 0) {
+        return;
+    }
+
+    /* Animazione dots basata sul frame count */
+    int dot_count = (loading_status_frame % 3) + 1;
+
+    line[pos++] = '[';
+    for (int i = 0; i < dot_count && pos < 79; i++) line[pos++] = '.';
+    for (int i = dot_count; i < 3 && pos < 79; i++) line[pos++] = ' ';
+    line[pos++] = ']';
+    line[pos++] = ' ';
+
+    /* Progress bar: 10 caratteri, si riempie in base a loading_status_progress */
+    int bar_filled = (loading_status_progress * 10) / 100;
+    line[pos++] = '[';
+    for (int i = 0; i < 10 && pos < 79; i++) {
+        if (i < bar_filled) {
+            line[pos++] = '#';
+        } else {
+            line[pos++] = '.';
+        }
+    }
+    line[pos++] = ']';
+    line[pos++] = ' ';
+
+    /* Percentuale numerica (3 cifre) */
+    line[pos++] = ' ';
+    line[pos++] = '0' + (loading_status_progress / 100) % 10;
+    line[pos++] = '0' + (loading_status_progress / 10) % 10;
+    line[pos++] = '0' + loading_status_progress % 10;
+    line[pos++] = '%';
+    line[pos++] = ' ';
+
+    /* Label */
+    for (int i = 0; loading_status_label[i] && pos < 79; i++) line[pos++] = loading_status_label[i];
+    line[pos] = '\0';
+
+    vga_replace_line_text(loading_status_line, line);
+}
+
+static void vga_replace_current_input_line(const char *prompt, const char *input, int cursor_pos)
+{
+    int line = terminal_total_lines - 1;
+    int col = 0;
+
+    if (line < 0) {
+        return;
+    }
+
+    for (int j = 0; j < VGA_COLS; j++) {
+        terminal_history[line][j] = ' ' | (VGA_ATTR << 8);
+    }
+
+    /* Write prompt */
+    while (*prompt && col < VGA_COLS) {
+        terminal_history[line][col++] = *prompt++ | (VGA_ATTR << 8);
+    }
+
+    int input_start = col;
+    int input_len = kstrlen(input);
+
+    /* Write input with cursor highlight */
+    for (int i = 0; i < input_len && col < VGA_COLS; i++) {
+        if (i == cursor_pos) {
+            /* Show character at cursor with inverse video */
+            terminal_history[line][col++] = input[i] | (0x70 << 8);
+        } else {
+            terminal_history[line][col++] = input[i] | (VGA_ATTR << 8);
+        }
+    }
+
+    /* If cursor is at end of input, show an underscore cursor */
+    if (cursor_pos >= input_len && col < VGA_COLS) {
+        terminal_history[line][col++] = '_' | (0x70 << 8);
+    }
+
+    /* Set hardware cursor position to cursor location */
+    cursor_col = (uint8_t)(input_start + cursor_pos);
+    vga_refresh();
+}
+
+static void show_text_prompt(void)
+{
+    vga_replace_current_input_line("> ", cmd, cmd_cursor);
+}
+
 static void reboot_system(void)
 {
     io_outb(0x64, 0xFE);
@@ -375,68 +673,203 @@ static void shutdown_system(void)
     halt();
 }
 
+static void pseudo_console_log(const char *msg)
+{
+    append_gfx_log(msg);
+}
+
+static void text_console_log(const char *msg)
+{
+    printk("%s\n", msg);
+}
+
+static int execute_console_command(
+    const char *command,
+    void (*log_fn)(const char *),
+    int graphics_console)
+{
+    if (streq(command, "help")) {
+        log_fn("Available commands:");
+        log_fn("help                - Show this help");
+        log_fn("clear               - Clear the console");
+        log_fn("reboot              - Restart the system");
+        log_fn("shutdown            - Power off the system");
+        log_fn("gfx                 - Enter graphics mode");
+        log_fn("layout us           - Set US keyboard layout");
+        log_fn("layout uk           - Set UK keyboard layout");
+        log_fn("layout it           - Set Italian keyboard layout");
+        log_fn("cmd.print(\"msg\")    - Print a message");
+        log_fn("os.bootinfo         - Show boot information");
+    } else if (streq(command, "clear")) {
+        if (graphics_console) {
+            clear_gfx_log();
+        } else {
+            vga_clear_public();
+            printk("openkernel Command Line\n");
+            printk("Type 'help' for available commands.\n");
+        }
+    } else if (streq(command, "reboot")) {
+        log_fn("Rebooting...");
+        if (graphics_console) {
+            render_pseudo_text_screen();
+        }
+        reboot_system();
+    } else if (streq(command, "shutdown")) {
+        log_fn("Shutting down...");
+        if (graphics_console) {
+            render_pseudo_text_screen();
+        }
+        shutdown_system();
+    } else if (streq(command, "gfx")) {
+        if (graphics_console) {
+            pseudo_text_mode_active = 0;
+            render_graphics_test_screen();
+        } else if (display_enter_gfx()) {
+            graphics_mode_active = 1;
+            pseudo_text_mode_active = 0;
+            render_graphics_test_screen();
+        } else {
+            log_fn("Failed to enter graphics mode");
+        }
+    } else if (streq(command, "layout us")) {
+        keyboard_detect_layout("layout=us");
+        log_fn("Keyboard layout set to US");
+    } else if (streq(command, "layout uk")) {
+        keyboard_detect_layout("layout=uk");
+        log_fn("Keyboard layout set to UK");
+    } else if (streq(command, "layout it")) {
+        keyboard_detect_layout("layout=it");
+        log_fn("Keyboard layout set to IT");
+    } else if (kstrlen(command) >= 9 && command[0] == 'c' && command[1] == 'm' && command[2] == 'd' && command[3] == '.' && command[4] == 'p' && command[5] == 'r' && command[6] == 'i' && command[7] == 'n' && command[8] == 't') {
+        /* cmd.print(...) */
+        if (kstrlen(command) == 9) {
+            /* Just "cmd.print" with no parens */
+            log_fn("Error: incomplete statement");
+        } else {
+            char msg[128];
+            if (extract_parenthesis_content(command + 9, msg, sizeof(msg))) {
+                if (msg[0] == '\0') {
+                    log_fn("Error: incomplete statement");
+                } else {
+                    log_fn(msg);
+                }
+            } else {
+                log_fn("Error: incomplete statement");
+            }
+        }
+    } else if (streq(command, "os.bootinfo")) {
+        log_fn("=== openkernel Boot Info ===");
+        {
+            /* Magic: 0xXXXXXXXX  Flags: 0xXXXXXXXX */
+            char b[64];
+            const char *hex = "0123456789abcdef";
+            int bi = 0;
+            int si;
+
+            b[bi++] = 'M'; b[bi++] = 'a'; b[bi++] = 'g'; b[bi++] = 'i';
+            b[bi++] = 'c'; b[bi++] = ':'; b[bi++] = ' ';
+            b[bi++] = '0'; b[bi++] = 'x';
+            for (si = 28; si >= 0; si -= 4) b[bi++] = hex[(saved_magic >> si) & 0xF];
+            b[bi++] = ' ';
+            b[bi++] = 'F'; b[bi++] = 'l'; b[bi++] = 'a'; b[bi++] = 'g';
+            b[bi++] = 's'; b[bi++] = ':'; b[bi++] = ' ';
+            b[bi++] = '0'; b[bi++] = 'x';
+            for (si = 28; si >= 0; si -= 4) b[bi++] = hex[(saved_flags >> si) & 0xF];
+            b[bi] = '\0';
+            log_fn(b);
+        }
+        {
+            /* Memory: X KB lower, Y KB upper (Z MB) */
+            char b[64];
+            int bi = 0;
+            const char *m = "Memory: ";
+            while (*m) b[bi++] = *m++;
+
+            { unsigned long v = saved_mem_lower; char t[16]; int ti = 0;
+              if (v == 0) { b[bi++] = '0'; }
+              else { while (v > 0 && ti < 15) { t[ti++] = '0' + (v % 10); v /= 10; }
+                     while (ti > 0) b[bi++] = t[--ti]; }
+            }
+            b[bi++] = ' '; b[bi++] = 'K'; b[bi++] = 'B';
+
+            { const char *s = " lower, "; while (*s) b[bi++] = *s++; }
+
+            { unsigned long v = saved_mem_upper; char t[16]; int ti = 0;
+              if (v == 0) { b[bi++] = '0'; }
+              else { while (v > 0 && ti < 15) { t[ti++] = '0' + (v % 10); v /= 10; }
+                     while (ti > 0) b[bi++] = t[--ti]; }
+            }
+            b[bi++] = ' '; b[bi++] = 'K'; b[bi++] = 'B';
+
+            { const char *s = " upper"; while (*s) b[bi++] = *s++; }
+
+            b[bi] = '\0';
+            log_fn(b);
+        }
+        if (saved_boot_loader_valid) {
+            char b[64];
+            int bi = 0;
+            const char *lb = "Loader: ";
+            while (*lb) b[bi++] = *lb++;
+            for (int i = 0; saved_boot_loader[i]; i++) b[bi++] = saved_boot_loader[i];
+            b[bi] = '\0';
+            log_fn(b);
+        }
+    } else if (kstrlen(command) > 0) {
+        log_fn("Unknown command");
+        log_fn("Type 'help' for available commands");
+        return 0;
+    }
+
+    return 1;
+}
+
 static void pseudo_console_execute(void)
 {
     pseudo_cmd[pseudo_cmd_len] = '\0';
-    append_gfx_log(pseudo_cmd_len ? pseudo_cmd : "(empty)");
-
-    if (streq(pseudo_cmd, "layout us")) {
-        keyboard_detect_layout("layout=us");
-        append_gfx_log("OK: keyboard layout set to US");
-    } else if (streq(pseudo_cmd, "layout uk")) {
-        keyboard_detect_layout("layout=uk");
-        append_gfx_log("OK: keyboard layout set to UK");
-    } else if (streq(pseudo_cmd, "layout it")) {
-        keyboard_detect_layout("layout=it");
-        append_gfx_log("OK: keyboard layout set to IT");
-    } else if (streq(pseudo_cmd, "reboot")) {
-        append_gfx_log("Rebooting...");
-        render_pseudo_text_screen();
-        reboot_system();
-    } else if (streq(pseudo_cmd, "shutdown")) {
-        append_gfx_log("Shutting down...");
-        render_pseudo_text_screen();
-        shutdown_system();
-    } else {
-        append_gfx_log("Unknown command");
+    if (pseudo_cmd_len > 0) {
+        append_gfx_prompt_line(pseudo_cmd);
+        execute_console_command(pseudo_cmd, pseudo_console_log, 1);
     }
 
     pseudo_cmd_len = 0;
+    pseudo_cmd_cursor = 0;
     pseudo_cmd[0] = '\0';
+}
+
+static void execute_text_command(const char *command)
+{
+    execute_console_command(command, text_console_log, 0);
 }
 
 /* Kernel initialization */
 void kernel_init(void)
 {
     int load_frame = 0;
+
     vga_clear();
+
+    /* Hide the default hardware cursor (keep only our custom rectangle cursor) */
+    io_outb(0x3D4, 0x0A);
+    io_outb(0x3D5, 0x20);
+
     printk("openkernel Kernel v0.2\n");
     printk("Built: " __DATE__ " " __TIME__ "\n\n");
 
     loading_tick_inline("GDT", &load_frame);
-    printk("Initializing GDT...\n");
     gdt_init();
-    printk("  [OK]\n");
 
     loading_tick_inline("IDT/PIC", &load_frame);
-    printk("Initializing IDT/PIC...\n");
     idt_init();
-    printk("  [OK]\n");
 
     loading_tick_inline("ISRs", &load_frame);
-    printk("Installing ISRs...\n");
     isr_install_all();
-    printk("  [OK]\n");
 
     loading_tick_inline("PIT Timer", &load_frame);
-    printk("Initializing PIT timer @100Hz...\n");
     timer_init(100);
-    printk("  [OK]\n");
 
     loading_tick_inline("PS/2 Keyboard", &load_frame);
-    printk("Initializing PS/2 keyboard...\n");
     keyboard_init();
-    printk("  [OK]\n");
 }
 
 /* Main kernel entry point */
@@ -454,17 +887,16 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
     }
 
     /* Initialize memory management */
-    printk("Initializing memory management...\n");
     memory_init(mbd->mem_lower, mbd->mem_upper);
     printk("  [OK]\n\n");
+
+    /* Enable interrupts for preemptive multitasking */
+    enable_interrupts();
 
     /* Initialize process management */
     printk("Initializing process management...\n");
     process_init();
     printk("  [OK]\n\n");
-
-    printk("Enabling interrupts and starting scheduler...\n");
-    enable_interrupts();
 
     if (asm_get_eflags() & 0x200) {
         printk("  [OK] System Ready (EFLAGS: 0x%x)\n\n", asm_get_eflags());
@@ -481,11 +913,32 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
     if (mbd->boot_loader_name)
         printk("Loader: %s\n", (const char *)mbd->boot_loader_name);
 
-    printk("\n=== System Ready ===\n");
-    printk("Press Ctrl+T to toggle graphics test mode.\n");
+    /* Save boot info for os.bootinfo command */
+    saved_magic = magic;
+    saved_flags = mbd->flags;
+    saved_mem_lower = mbd->mem_lower;
+    saved_mem_upper = mbd->mem_upper;
+    if (mbd->boot_loader_name) {
+        const char *name = (const char *)mbd->boot_loader_name;
+        int i = 0;
+        while (name[i] && i < 63) {
+            saved_boot_loader[i] = name[i];
+            i++;
+        }
+        saved_boot_loader[i] = '\0';
+        saved_boot_loader_valid = 1;
+    } else {
+        saved_boot_loader_valid = 0;
+    }
+
+    /* Transition to clean command-line interface */
+    vga_clear_public();
+    printk("openkernel Command Line\n");
+    printk("Type 'help' for available commands.\n");
+
+    show_text_prompt();
 
     /* Simple idle loop with Ctrl+T graphics toggle */
-    int keys_seen = 0;
     while (1) {
         /* Handle Ctrl+T graphics toggle */
         if (graphics_toggle_requested) {
@@ -515,28 +968,149 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
             while ((sc = keyboard_get_scancode()) != 0) {
                 char key = keyboard_scancode_to_ascii(sc);
                 if (!graphics_mode_active) {
-                    printk("[%d] Scancode: 0x%x -> Char: '%c'\n", ++keys_seen, sc, key ? key : '?');
+                    /* Text mode - handle commands with cursor support */
+                    if (sc == 0x1C) { /* Enter - execute command */
+                        printk("\n");
+                        cmd[cmd_len] = '\0';
+                        if (cmd_len > 0) {
+                            execute_text_command(cmd);
+                        }
+                        cmd_len = 0;
+                        cmd[0] = '\0';
+                        cmd_cursor = 0;
+                        show_text_prompt();
+                    } else if (sc == 0x0E) { /* Backspace */
+                        if (cmd_cursor > 0) {
+                            for (int i = cmd_cursor - 1; i < cmd_len - 1; i++)
+                                cmd[i] = cmd[i+1];
+                            cmd_len--;
+                            cmd_cursor--;
+                            cmd[cmd_len] = '\0';
+                        }
+                        show_text_prompt();
+                    } else {
+                        char ch = keyboard_scancode_to_ascii(sc);
+                        if (ch >= 32 && ch <= 126 && cmd_len < (int)sizeof(cmd) - 1) {
+                            /* Insert at cursor position */
+                            for (int i = cmd_len; i > cmd_cursor; i--)
+                                cmd[i] = cmd[i-1];
+                            cmd[cmd_cursor] = ch;
+                            cmd_len++;
+                            cmd_cursor++;
+                            cmd[cmd_len] = '\0';
+                            show_text_prompt();
+                        }
+                    }
                 } else if (pseudo_text_mode_active) {
                     (void)key;
                     if (sc == 0x1C) { /* Enter */
                         pseudo_console_execute();
+                        pseudo_cmd_cursor = 0;
                     } else if (sc == 0x0E) { /* Backspace */
-                        if (pseudo_cmd_len > 0) pseudo_cmd[--pseudo_cmd_len] = '\0';
+                        if (pseudo_cmd_cursor > 0) {
+                            for (int i = pseudo_cmd_cursor - 1; i < pseudo_cmd_len - 1; i++)
+                                pseudo_cmd[i] = pseudo_cmd[i+1];
+                            pseudo_cmd_len--;
+                            pseudo_cmd_cursor--;
+                            pseudo_cmd[pseudo_cmd_len] = '\0';
+                        }
                     } else {
                         char ch = keyboard_scancode_to_ascii(sc);
                         if (ch >= 32 && ch <= 126 && pseudo_cmd_len < (int)sizeof(pseudo_cmd) - 1) {
-                            pseudo_cmd[pseudo_cmd_len++] = ch;
+                            /* Insert at cursor position */
+                            for (int i = pseudo_cmd_len; i > pseudo_cmd_cursor; i--)
+                                pseudo_cmd[i] = pseudo_cmd[i-1];
+                            pseudo_cmd[pseudo_cmd_cursor] = ch;
+                            pseudo_cmd_len++;
+                            pseudo_cmd_cursor++;
                             pseudo_cmd[pseudo_cmd_len] = '\0';
                         }
                     }
                     render_pseudo_text_screen();
+                } else {
+                    /* Handle regular graphics mode input */
+                    if (sc == 0x1C) { /* Enter - switch to pseudo text mode */
+                        pseudo_text_mode_active = 1;
+                        pseudo_cmd_len = 0;
+                        pseudo_cmd_cursor = 0;
+                        pseudo_cmd[0] = '\0';
+                        render_pseudo_text_screen();
+                    } else if (sc == 0x0E) { /* Backspace */
+                        if (pseudo_cmd_cursor > 0) {
+                            for (int i = pseudo_cmd_cursor - 1; i < pseudo_cmd_len - 1; i++)
+                                pseudo_cmd[i] = pseudo_cmd[i+1];
+                            pseudo_cmd_len--;
+                            pseudo_cmd_cursor--;
+                            pseudo_cmd[pseudo_cmd_len] = '\0';
+                        }
+                        render_pseudo_text_screen();
+                    } else {
+                        char ch = keyboard_scancode_to_ascii(sc);
+                        if (ch >= 32 && ch <= 126 && pseudo_cmd_len < (int)sizeof(pseudo_cmd) - 1) {
+                            /* Insert at cursor position */
+                            for (int i = pseudo_cmd_len; i > pseudo_cmd_cursor; i--)
+                                pseudo_cmd[i] = pseudo_cmd[i-1];
+                            pseudo_cmd[pseudo_cmd_cursor] = ch;
+                            pseudo_cmd_len++;
+                            pseudo_cmd_cursor++;
+                            pseudo_cmd[pseudo_cmd_len] = '\0';
+                            render_pseudo_text_screen();
+                        }
+                    }
+                }
+            }
+
+            /* Handle arrow key requests after all scancodes processed */
+            if (arrow_up_requested) {
+                arrow_up_requested = 0;
+                if (!graphics_mode_active) {
+                    vga_scroll(1);
+                }
+            }
+            if (arrow_down_requested) {
+                arrow_down_requested = 0;
+                if (!graphics_mode_active) {
+                    vga_scroll(-1);
+                }
+            }
+            if (arrow_left_requested) {
+                arrow_left_requested = 0;
+                if (!graphics_mode_active) {
+                    if (cmd_cursor > 0) { cmd_cursor--; show_text_prompt(); }
+                } else if (pseudo_text_mode_active) {
+                    if (pseudo_cmd_cursor > 0) { pseudo_cmd_cursor--; render_pseudo_text_screen(); }
+                }
+            }
+            if (arrow_right_requested) {
+                arrow_right_requested = 0;
+                if (!graphics_mode_active) {
+                    if (cmd_cursor < cmd_len) { cmd_cursor++; show_text_prompt(); }
+                } else if (pseudo_text_mode_active) {
+                    if (pseudo_cmd_cursor < pseudo_cmd_len) { pseudo_cmd_cursor++; render_pseudo_text_screen(); }
+                }
+            }
+            if (delete_requested) {
+                delete_requested = 0;
+                if (!graphics_mode_active) {
+                    if (cmd_cursor < cmd_len) {
+                        for (int i = cmd_cursor; i < cmd_len - 1; i++)
+                            cmd[i] = cmd[i+1];
+                        cmd_len--;
+                        cmd[cmd_len] = '\0';
+                        show_text_prompt();
+                    }
+                } else if (pseudo_text_mode_active) {
+                    if (pseudo_cmd_cursor < pseudo_cmd_len) {
+                        for (int i = pseudo_cmd_cursor; i < pseudo_cmd_len - 1; i++)
+                            pseudo_cmd[i] = pseudo_cmd[i+1];
+                        pseudo_cmd_len--;
+                        pseudo_cmd[pseudo_cmd_len] = '\0';
+                        render_pseudo_text_screen();
+                    }
                 }
             }
         }
 
-        if (!graphics_mode_active) {
-            vga_update_hardware_cursor();
-        }
         asm volatile ("hlt");
     }
 }
@@ -546,3 +1120,4 @@ void halt(void)
 {
     asm volatile ("cli\n1:\nhlt\njmp 1b\n");
 }
+

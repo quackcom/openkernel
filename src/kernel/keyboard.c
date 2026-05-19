@@ -38,6 +38,13 @@ static volatile int extended_mode = 0;
 /* Debug counter for keyboard interrupts */
 static volatile int keyboard_debug_counter = 0;
 
+/* Arrow key request flags - set by IRQ, consumed in main loop */
+volatile int arrow_left_requested = 0;
+volatile int arrow_right_requested = 0;
+volatile int arrow_up_requested = 0;
+volatile int arrow_down_requested = 0;
+volatile int delete_requested = 0;
+
 /* Keyboard Layouts */
 typedef enum {
     LAYOUT_US,
@@ -45,7 +52,7 @@ typedef enum {
     LAYOUT_IT
 } layout_t;
 
-static layout_t current_layout = LAYOUT_US;
+static layout_t current_layout = LAYOUT_IT;
 
 /* US QWERTY scancode set 1 -> ASCII */
 static const char scancode_ascii_lower_us[] = {
@@ -171,14 +178,14 @@ static void keyboard_irq_handler(void)
             break;
     }
     
-    /* 2. Handle Extended arrow keys for scrolling (text mode only) */
-    extern int graphics_mode_active;
+    /* 2. Handle Extended scancodes (arrows, etc.) */
     if (extended_mode) {
         extended_mode = 0;
-        if (!graphics_mode_active) {
-            if (scancode == 0x48) { vga_scroll(1); return; }  /* Up Arrow */
-            if (scancode == 0x50) { vga_scroll(-1); return; } /* Down Arrow */
-        }
+        if (scancode == 0x48) { arrow_up_requested = 1; return; }    /* Up Arrow */
+        if (scancode == 0x50) { arrow_down_requested = 1; return; }  /* Down Arrow */
+        if (scancode == 0x4B) { arrow_left_requested = 1; return; }  /* Left Arrow */
+        if (scancode == 0x4D) { arrow_right_requested = 1; return; } /* Right Arrow */
+        if (scancode == 0x53) { delete_requested = 1; return; }      /* Delete (Canc) */
         return; /* Ignore other extended keys */
     }
 
@@ -187,9 +194,10 @@ static void keyboard_irq_handler(void)
     if (scancode == 0x14) { /* 'T' pressed */
         if (!t_key_pressed && (modifiers & (KEYBOARD_LCTRL | KEYBOARD_RCTRL))) {
             graphics_toggle_requested = 1;
+            t_key_pressed = 1;
+            return;
         }
-        t_key_pressed = 1;
-        return;
+        /* If not Ctrl+T, continue to process as regular key */
     } else if (scancode == 0x94) { /* 'T' released */
         t_key_pressed = 0;
         return;

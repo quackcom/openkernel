@@ -262,6 +262,9 @@ void scheduler_remove_process(pid_t pid) {
 
 /* Scheduler main function */
 void scheduler_schedule(void) {
+    /* Guard: process management not initialized yet */
+    if (!current_process || process_count == 0) return;
+
     pcb_t* prev_process = current_process;
 
     if (!ready_queue) {
@@ -304,5 +307,59 @@ void test_process(void) {
         printk("Process %d: Count %d\n", pid, count++);
         for (volatile int i = 0; i < 1000000; i++);  /* Delay */
         process_yield();
+    }
+}
+
+/* ================================================================
+ * Wait queues — blocking synchronization primitives
+ * ================================================================ */
+
+/* Block the current process on a wait queue.
+ * The caller MUST have disabled interrupts.
+ * The process is removed from the ready queue and placed on the
+ * wait queue, then the scheduler picks the next runnable process. */
+void process_block(wait_queue_t *wq) {
+    if (!current_process) return;
+
+    /* Idle process must never block */
+    if (current_process->pid == 0) return;
+
+    /* Move current process to blocked state */
+    current_process->state = PROCESS_STATE_BLOCKED;
+
+    /* Append to wait queue tail */
+    current_process->next = NULL;
+    if (wq->tail) {
+        wq->tail->next = current_process;
+    } else {
+        wq->head = current_process;
+    }
+    wq->tail = current_process;
+
+    /* Schedule next process (won't re-add current since state is BLOCKED) */
+    scheduler_schedule();
+}
+
+/* Wake the first process on a wait queue.
+ * The caller MUST have disabled interrupts. */
+void process_wake(wait_queue_t *wq) {
+    if (!wq->head) return;
+
+    /* Dequeue first waiter */
+    pcb_t *waiter = wq->head;
+    wq->head = waiter->next;
+    if (!wq->head) wq->tail = NULL;
+    waiter->next = NULL;
+
+    /* Move to ready queue */
+    waiter->state = PROCESS_STATE_READY;
+    add_to_ready_queue(waiter);
+}
+
+/* Wake all processes on a wait queue.
+ * The caller MUST have disabled interrupts. */
+void process_wake_all(wait_queue_t *wq) {
+    while (wq->head) {
+        process_wake(wq);
     }
 }

@@ -34,6 +34,7 @@ KEYBOARD_C = $(KERNEL_DIR)/keyboard.c
 DISPLAY_C = $(KERNEL_DIR)/display.c
 MEMORY_C = $(KERNEL_DIR)/memory.c
 PROCESS_C = $(KERNEL_DIR)/process.c
+SYNC_C   = $(KERNEL_DIR)/sync.c
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -50,6 +51,7 @@ KEYBOARD_OBJ = $(BUILD_DIR)/keyboard.o
 DISPLAY_OBJ = $(BUILD_DIR)/display.o
 MEMORY_OBJ = $(BUILD_DIR)/memory.o
 PROCESS_OBJ = $(BUILD_DIR)/process.o
+SYNC_OBJ   = $(BUILD_DIR)/sync.o
 
 # Output files
 KERNEL_ELF = $(BUILD_DIR)/kernel.elf
@@ -66,7 +68,7 @@ $(BUILD_DIR):
 	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 
 # Build kernel ELF executable
-$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(ISR_COMMON_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
+$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(ISR_COMMON_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(SYNC_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
 	@echo "Linking kernel..."
 	$(LD) $(LDFLAGS) -o $@ $^
 	@echo "Kernel built: $@"
@@ -123,6 +125,10 @@ $(MEMORY_OBJ): $(MEMORY_C) $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | $(BUILD_DIR
 $(PROCESS_OBJ): $(PROCESS_C) $(KERNEL_DIR)/process.h $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | $(BUILD_DIR)
 	@echo "Compiling process management..."
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(PROCESS_C)
+
+$(SYNC_OBJ): $(SYNC_C) $(KERNEL_DIR)/sync.h $(KERNEL_DIR)/process.h | $(BUILD_DIR)
+	@echo "Compiling synchronization primitives..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(SYNC_C)
 
 $(KERNEL_OBJ): $(KERNEL_C) $(KERNEL_HEADER) | $(BUILD_DIR)
 	@echo "Compiling kernel..."

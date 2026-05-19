@@ -61,4 +61,32 @@ void context_switch(uint32_t* prev_esp, uint32_t next_esp);
 /* Process entry point wrapper */
 void process_wrapper(void);
 
+/* ================================================================
+ * Wait queues — for blocking synchronization (mutexes, semaphores)
+ * ================================================================ */
+typedef struct {
+    pcb_t *head;  /* First blocked process */
+    pcb_t *tail;  /* Last blocked process (O(1) append) */
+} wait_queue_t;
+
+/* Initialize a wait queue */
+static inline void wait_queue_init(wait_queue_t *wq) {
+    wq->head = NULL;
+    wq->tail = NULL;
+}
+
+/* Block the current process on a wait queue.
+ * Must be called with interrupts disabled.
+ * The current process is not re-added to the ready queue —
+ * it stays blocked until process_wake / process_wake_all moves it back. */
+void process_block(wait_queue_t *wq);
+
+/* Wake the first process waiting on a queue (if any).
+ * Must be called with interrupts disabled. */
+void process_wake(wait_queue_t *wq);
+
+/* Wake all processes waiting on a queue.
+ * Must be called with interrupts disabled. */
+void process_wake_all(wait_queue_t *wq);
+
 #endif /* PROCESS_H */

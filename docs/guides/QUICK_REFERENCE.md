@@ -46,23 +46,59 @@ When running successfully, QEMU should display:
 
 ```
 openkernel Kernel v0.2
-Built: May 13 2026 XX:XX:XX
+Built: <build date> <build time>
 
-=== System Ready ===
-Press Ctrl+T to toggle graphics test mode.
+[Loading 1/5] [#####] GDT
+[Loading 2/5] [#####] IDT/PIC
+[Loading 3/5] [#####] ISRs
+[Loading 4/5] [#####] PIT Timer
+[Loading 5/5] [#####] PS/2 Keyboard
+  [OK]
+
+Initializing memory management...
+  [OK]
+
+Initializing process management...
+  [OK]
+  [OK] System Ready (EFLAGS: 0x...)
+
+=== openkernel Boot Info ===
+Magic: 0x2BADB002  Flags: 0x...
+Memory: ... KB lower, ... KB upper (... MB total)
+Loader: ...
+
+openkernel Command Line
+Type 'help' for available commands.
+> _
 ```
 
 ## Keyboard Controls
 
-- **Ctrl+T** - Toggle between graphics test mode and text console
+- **Ctrl+T** - Toggle between graphics test mode and pseudo-text console
 - **Ctrl+Alt+Q** - Quit QEMU
+- **Arrow Up/Down** - Scroll terminal history (text mode)
+- **Arrow Left/Right** - Move cursor within command line
+- **Backspace** - Delete character before cursor
+- **Delete** - Delete character at cursor (graphics mode)
+- **Enter** - Execute command
+
+## Available Commands
+
+- `help` - Show available commands
+- `clear` - Clear the console
+- `reboot` - Restart the system
+- `shutdown` - Power off the system
+- `gfx` - Enter graphics mode
+- `layout us|uk|it` - Set keyboard layout
+- `cmd.print("msg")` - Print a message
+- `os.bootinfo` - Show boot information
 
 ## Troubleshooting
 
 **Problem**: Command not found (i686-elf-gcc, nasm, qemu-system-i386)
 - **Solution**: Ensure tools are in your PATH. See [Setup Guide](../setup/SETUP_WINDOWS.md)
 
-**Problem**: QEMU opens but kernel doesn't print anything
+**Problem**: QEMU hangs or kernel doesn't print anything
 - **Solution**: Check that boot.asm and kernel.c compiled correctly. Try: `make clean && make run`
 
 **Problem**: "grub-mkrescue not found" when running `make iso`

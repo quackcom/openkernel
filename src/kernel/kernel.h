@@ -54,6 +54,10 @@ void kernel_init(void);
 void printk(const char *format, ...);
 void putchar(char c);
 void puts(const char *str);
+void loading_status_start(const char *label);
+void loading_status_tick(void);
+void loading_status_set_progress(int percent);
+void loading_status_done(void);
 
 /* Memory management (future) */
 void *kmalloc(size_t size);

@@ -6,6 +6,8 @@
 
 /* Physical Memory Manager */
 #define PMM_MAX_PAGES 0x100000  /* Support up to 4GB RAM */
+/* Tick roughly every ~4MB of pages processed (about 1024 pages) */
+#define PMM_STATUS_TICK_INTERVAL 1024U
 static uint32_t pmm_bitmap[PMM_MAX_PAGES / 32];
 static uint32_t pmm_page_count = 0;
 static uint32_t pmm_free_pages = 0;
@@ -56,14 +58,41 @@ static uint32_t pmm_find_free_page(void) {
     return PMM_MAX_PAGES;  /* Not found */
 }
 
+/* Simple busy-wait delay (approx microseconds, very rough).
+   Usato per rendere visibile l'animazione di caricamento. */
+static void busy_delay(uint32_t iterations)
+{
+    for (volatile uint32_t d = 0; d < iterations; d++) {
+        /* Busy-wait: consuma cicli CPU */
+    }
+}
+
 void pmm_init(uint32_t mem_lower, uint32_t mem_upper) {
+    int status_started = 0;
+
     /* Calculate total memory in KB */
     uint32_t total_mem_kb = mem_lower + mem_upper;
     pmm_page_count = total_mem_kb * 1024 / PAGE_SIZE;
 
-    /* Initialize all pages as used */
-    for (uint32_t i = 0; i < PMM_MAX_PAGES; i++) {
+    /* Initialize all pages as used, with progress bar and delay */
+    for (uint32_t i = 0; i < pmm_page_count; i++) {
+        if (!status_started) {
+            loading_status_start("Memory management");
+            loading_status_set_progress(0);
+            status_started = 1;
+        }
+
         pmm_set_bit(i, 1);
+
+        /* Aggiorna progress bar e dots ogni 1024 pagine */
+        if ((i % PMM_STATUS_TICK_INTERVAL) == 0) {
+            int percent = (int)(i * 50 / pmm_page_count); /* 0-50% per la prima fase */
+            loading_status_set_progress(percent);
+            loading_status_tick();
+
+            /* Delay per rendere visibile l'animazione (~3-4 secondi totali) */
+            busy_delay(80000);
+        }
     }
 
     /* Free available pages (from 1MB up to detected memory limit) */
@@ -78,7 +107,19 @@ void pmm_init(uint32_t mem_lower, uint32_t mem_upper) {
     for (uint32_t i = start_page_to_free; i < pmm_page_count; i++) {
         pmm_set_bit(i, 0);
         pmm_free_pages++;
+
+        /* Aggiorna progress bar e dots per la seconda fase (50-100%) */
+        if ((i % PMM_STATUS_TICK_INTERVAL) == 0) {
+            int percent = 50 + (int)((i - start_page_to_free) * 50 / (pmm_page_count - start_page_to_free));
+            loading_status_set_progress(percent);
+            loading_status_tick();
+
+            /* Delay per rendere visibile l'animazione */
+            busy_delay(80000);
+        }
     }
+
+    loading_status_done();
 
     printk("Memory: %d KB (%d total pages, %d free pages)\n",
            total_mem_kb, pmm_page_count, pmm_free_pages);

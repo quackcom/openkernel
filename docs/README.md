@@ -12,6 +12,7 @@ This directory contains comprehensive documentation for the openkernel project.
 - **[Build Guide](build/BUILD.md)** - Detailed build instructions, options, and troubleshooting
 - **[Architecture Overview](architecture/OVERVIEW.md)** - System design, layers, and boot sequence
 - **[Module Reference](architecture/MODULES.md)** - Detailed documentation of each kernel module
+- **[Roadmap](roadmap/ROADMAP.md)** - Development phases and future plans
 
 ## Documentation Structure
 
@@ -24,9 +25,11 @@ docs/
 │   └── BUILD.md                # Build system and instructions
 ├── guides/
 │   └── QUICK_REFERENCE.md      # Quick start and common tasks
-└── architecture/
-    ├── OVERVIEW.md             # System architecture and design
-    └── MODULES.md              # Individual module documentation
+├── architecture/
+│   ├── OVERVIEW.md             # System architecture and design
+│   └── MODULES.md              # Individual module documentation
+└── roadmap/
+    └── ROADMAP.md              # Development phases and plans
 ```
 
 ## For Different Roles

@@ -29,7 +29,14 @@ uint8_t keyboard_get_scancode(void);
 /* Convert scancode to ASCII character (respects shift/caps) */
 char keyboard_scancode_to_ascii(uint8_t scancode);
 
-/* Poll the PS/2 controller once and print any raw scancodes (debug) */
-void keyboard_poll_once(void);
+/* Arrow key request flags - set by IRQ, consumed in main loop */
+extern volatile int arrow_left_requested;
+extern volatile int arrow_right_requested;
+extern volatile int arrow_up_requested;
+extern volatile int arrow_down_requested;
+extern volatile int delete_requested;
+
+/* Set keyboard layout by ID (0=US, 1=UK, 2=IT) */
+void keyboard_set_layout(int layout);
 
 #endif /* KEYBOARD_H */

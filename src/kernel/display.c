@@ -453,7 +453,7 @@ void display_disable(void)
      */
     vbe_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     vga_restore_text_state();
-    vga_set_cursor_visible(1);
+    vga_set_cursor_visible(0);
     probe_vga_text();
 }
 
@@ -602,20 +602,9 @@ void display_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t 
 #define CHAR_W (FONT_W * CHAR_SCALE)   /* 16 px wide */
 #define CHAR_H (FONT_H * CHAR_SCALE)   /* 16 px tall */
 
-/* A small clean fallback set for text used by graphics tests. */
-static const uint8_t glyph_T[8] = { 0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00 };
-static const uint8_t glyph_E[8] = { 0x7E, 0x06, 0x06, 0x3E, 0x06, 0x06, 0x7E, 0x00 };
-static const uint8_t glyph_S[8] = { 0x3C, 0x06, 0x06, 0x3C, 0x60, 0x60, 0x3E, 0x00 };
-static const uint8_t glyph_X[8] = { 0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00 };
-static const uint8_t glyph_EX[8]= { 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x00 };
 
-static uint8_t reverse_bits(uint8_t b)
-{
-    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-    b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-    return b;
-}
+
+
 
 static const uint8_t *select_glyph(unsigned char c)
 {
@@ -633,7 +622,7 @@ void display_putchar(char c, uint32_t x, uint32_t y, uint32_t color)
     const uint8_t *glyph = select_glyph((unsigned char)c);
 
     for (int row = 0; row < FONT_H; row++) {
-        uint8_t bitmap = reverse_bits(glyph[row]);
+        uint8_t bitmap = glyph[row];
         for (int col = 0; col < FONT_W; col++) {
             if (bitmap & (1 << col)) {
                 /* Transparent background: only draw lit glyph pixels. */

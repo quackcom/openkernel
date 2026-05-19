@@ -20,10 +20,16 @@ static volatile uint32_t tick_count = 0;
 /* Extern scheduler call from process.c */
 extern void scheduler_schedule(void);
 
+/* Extern loading status animation from kernel.c */
+extern void loading_status_tick(void);
+
 /* Timer IRQ handler - called on each PIT tick */
 static void timer_irq_handler(void)
 {
     tick_count++;
+
+    /* Animate loading status dots on every tick (safe when active) */
+    loading_status_tick();
 
     /* Preempt the current process every 10 ticks (approx 100ms) */
     if (tick_count % 10 == 0) {

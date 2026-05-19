@@ -65,6 +65,14 @@ openkernel is a minimal educational x86-based operating system kernel built from
   - Low-level assembly for saving/restoring CPU state
   - Switches between different process contexts
 
+### Layer 5b: Synchronization
+- **Location**: `src/kernel/sync.c`, `src/kernel/sync.h`
+- **Purpose**: Thread-safe primitives
+- **Responsibilities**:
+  - Atomic operations (xchg, cmpxchg, add, inc, dec)
+  - Spinlocks with interrupt-safe variants
+  - Blocking mutexes using process wait queues
+
 ### Layer 6: I/O and Drivers
 - **Timer**: `src/kernel/timer.c`, `src/kernel/timer.h`
   - PIT (Programmable Interval Timer) driver
@@ -110,16 +118,19 @@ As defined by `linker.ld`:
 ## Boot Sequence
 
 1. **GRUB Bootloader** loads kernel.elf at 0x00100000
-2. **boot.asm** entry point executes
-3. **kernel.c main()** initializes:
-   - Multiboot information parsing
-   - GDT setup
-   - IDT setup
-   - ISR registration
-   - Memory manager
-   - Process manager
-   - Display system
-4. **Kernel main loop** displays boot info and waits for input
+2. **boot.asm** entry point executes (sets up stack, calls kernel_main)
+3. **kernel_main()** runs:
+   - Validates Multiboot magic
+   - Calls **kernel_init()** which initializes:
+     - GDT, IDT, ISRs (interrupt handling)
+     - PIT timer (IRQ 0 at 100 Hz)
+     - PS/2 keyboard (IRQ 1)
+   - Detects keyboard layout from Multiboot command line
+   - Initializes memory manager (pmm, vmm, heap)
+   - Enables interrupts for preemptive multitasking
+   - Initializes process manager
+   - Prints boot diagnostics
+4. **Idle loop** dispatches keyboard input to command prompt (text or graphics mode)
 
 ## Development Phases
 
@@ -130,28 +141,28 @@ As defined by `linker.ld`:
 - ✓ Kernel entry point
 - ✓ VGA output
 
-### Phase 2: Kernel Skeleton (IN PROGRESS)
-- [ ] GDT implementation
-- [ ] IDT implementation
-- [ ] Exception handlers
-- [ ] Interrupt handling
+### Phase 2: Kernel Skeleton (COMPLETE)
+- [x] GDT implementation
+- [x] IDT implementation
+- [x] Exception handlers
+- [x] Interrupt handling
 
-### Phase 3: Memory Management
-- [ ] Physical memory manager
-- [ ] Virtual memory (paging)
-- [ ] Heap allocator
+### Phase 3: Memory Management (COMPLETE)
+- [x] Physical memory manager (bitmap-based PMM)
+- [x] Virtual memory / paging (page directory + page tables)
+- [x] Heap allocator (kmalloc/kfree)
 
-### Phase 4: Process Management
-- [ ] Process structures
-- [ ] Context switching
-- [ ] Process scheduler
-- [ ] Syscall interface
+### Phase 4: Process Management (COMPLETE)
+- [x] Process structures (PCB with full state)
+- [x] Context switching
+- [x] Process scheduler (round-robin)
+- [x] Wait queues and synchronization primitives
 
-### Phase 5: I/O Drivers
-- [ ] Keyboard driver
-- [ ] Disk I/O
-- [ ] VGA graphics modes
-- [ ] PCI enumeration
+### Phase 5: I/O Drivers (COMPLETE)
+- [x] Keyboard driver (PS/2, IRQ-driven, multi-layout)
+- [x] Timer driver (PIT, IRQ-driven)
+- [x] Display abstraction (VGA text, VGA graphics, VBE, framebuffer)
+- [x] PCI enumeration
 
 ### Phase 6: Filesystem
 - [ ] Simple filesystem
@@ -169,7 +180,10 @@ As defined by `linker.ld`:
 2. **Protected Mode Only**: Skips real mode complexity, assumes GRUB handles 32-bit setup
 3. **32-bit x86**: Good balance of simplicity and real-world relevance
 4. **Modular Design**: Each subsystem (GDT, IDT, Memory, etc.) is independent
-5. **Display Abstraction**: Supports multiple graphics backends (VGA, VBE, framebuffer)
+5. **Paging**: Kernel mapped at 0xC0000000 with identity mapping for early boot
+6. **Preemptive Multitasking**: Timer IRQ triggers round-robin scheduler
+7. **Display Abstraction**: Supports multiple graphics backends (VGA, VBE, framebuffer)
+8. **Synchronization Primitives**: Atomic ops, spinlocks, and blocking mutexes via wait queues
 
 ## See Also
 
