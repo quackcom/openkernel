@@ -1,7 +1,6 @@
-# Assigns [Wiki Suggestion #N] when label "wiki-suggestion" is applied (see .github/issue-labels.json).
-# Triggers on `labeled` because issue-form labels are applied after `opened`.
+# Assigns [Question #N] when label "question" is applied (see .github/issue-labels.json).
 
-name: Assign wiki suggestion number
+name: Assign question number
 
 on:
   issues:
@@ -11,24 +10,24 @@ permissions:
   issues: write
 
 concurrency:
-  group: wiki-suggestion-number-queue
+  group: question-number-queue
   cancel-in-progress: false
 
 jobs:
-  assign-wiki-suggestion-number:
+  assign-question-number:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'wiki-suggestion'
+    if: github.event.label.name == 'question'
     steps:
-      - name: Assign sequential [Wiki Suggestion #N] title
+      - name: Assign sequential [Question #N] title
         uses: actions/github-script@v7
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issueNumber = context.payload.issue.number;
-            const label = 'wiki-suggestion';
-            const titleRegex = /^\[Wiki Suggestion #(\d+)\]\s*/i;
-            const templatePrefix = /^\[Wiki Suggestion\]\s*/i;
+            const label = 'question';
+            const titleRegex = /^\[Question #(\d+)\]\s*/i;
+            const templatePrefix = /^\[Question\]\s*/i;
 
             const { data: issue } = await github.rest.issues.get({
               owner,
@@ -42,7 +41,7 @@ jobs:
             }
 
             if (titleRegex.test(issue.title)) {
-              core.info('Issue already has a wiki suggestion number in the title.');
+              core.info('Issue already has a question number in the title.');
               return;
             }
 
@@ -64,8 +63,8 @@ jobs:
             }
 
             const nextNum = maxNum + 1;
-            const baseTitle = issue.title.replace(templatePrefix, '').trim() || 'Wiki suggestion';
-            const newTitle = `[Wiki Suggestion #${nextNum}] ${baseTitle}`;
+            const baseTitle = issue.title.replace(templatePrefix, '').trim() || 'Question';
+            const newTitle = `[Question #${nextNum}] ${baseTitle}`;
 
             await github.rest.issues.update({
               owner,
@@ -81,5 +80,5 @@ jobs:
               repo,
               issue_number: issueNumber,
               body:
-                `Tracked as **Wiki Suggestion #${nextNum}** (assigned sequentially via the wiki-suggestion-number queue).`,
+                `Tracked as **Question #${nextNum}** (assigned sequentially via the question-number queue).`,
             });

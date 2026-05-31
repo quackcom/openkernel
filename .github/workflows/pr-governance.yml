@@ -10,6 +10,12 @@ on:
     types: [opened, synchronize, reopened, closed]
   pull_request_review:
     types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to re-check approvals'
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -65,10 +71,10 @@ jobs:
                 .filter((l) => l && !l.startsWith('#'));
               const needed = Math.floor(collaborators.length / 2) + 1;
               collabNote = `\n\n### Merge policy\n` +
-                `Collaborator majority required: **${needed}** of **${collaborators.length}** approvals ` +
-                `from: ${collaborators.map((c) => '`' + c + '`').join(', ')}.\n` +
-                `When majority is met, this workflow adds the \`ready-to-merge\` label (merge is still manual).\n` +
-                `See the **Collaborator approval status** comment below for how to approve.`;
+                `Collaborators: ${collaborators.map((c) => '`' + c + '`').join(', ')}.\n` +
+                `Need **${needed}** of ${collaborators.length} (PR author on the list counts as approved). ` +
+                `Then \`ready-to-merge\` is applied automatically.\n` +
+                `See the **Collaborator approval status** comment for details.`;
             } catch (e) {
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
@@ -122,6 +128,7 @@ jobs:
 
   majority-approval:
     if: |
+      github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request_review' ||
       (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
@@ -135,7 +142,11 @@ jobs:
             const fs = require('fs');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const prNumber = context.payload.pull_request.number;
+            const prNumber = Number(
+              github.event_name === 'workflow_dispatch'
+                ? context.payload.inputs.pr_number
+                : context.payload.pull_request.number
+            );
 
             const raw = fs.readFileSync('.github/COLLABORATORS', 'utf8');
             const collaborators = raw.split('\n')
@@ -147,7 +158,12 @@ jobs:
               return;
             }
 
-            const required = Math.floor(collaborators.length / 2) + 1;
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+            const author = (pr.user.login || '').toLowerCase();
 
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner,
@@ -163,16 +179,44 @@ jobs:
               }
             }
 
-            const approved = [];
-            for (const login of collaborators) {
-              if (latest.get(login) === 'APPROVED') approved.push(login);
-            }
+            const required = Math.floor(collaborators.length / 2) + 1;
 
+            // Listed PR author counts as approved (GitHub does not allow self-Approve on own PRs).
+            const approvedSet = new Set();
+            const authorIsCollaborator = collaborators.includes(author);
+            if (authorIsCollaborator) {
+              approvedSet.add(author);
+            }
+            for (const login of collaborators) {
+              if (latest.get(login) === 'APPROVED') approvedSet.add(login);
+            }
+            const approved = [...approvedSet];
             const majorityMet = approved.length >= required;
+
+            const ruleNote =
+              authorIsCollaborator
+                ? `The PR author @${pr.user.login} is in \`.github/COLLABORATORS\` and **counts as approved** automatically.\n\n`
+                : '';
+
+            async function ensureLabel(name) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (e) {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name,
+                  color: '0e8a16',
+                  description: 'Collaborator majority approval met',
+                });
+                core.info(`Created missing label: ${name}`);
+              }
+            }
 
             const howToApprove =
               `### How to approve\n\n` +
-              `Only GitHub users listed in [\`.github/COLLABORATORS\`](https://github.com/${owner}/${repo}/blob/main/.github/COLLABORATORS) count toward majority.\n\n` +
+              `Only users in [\`.github/COLLABORATORS\`](https://github.com/${owner}/${repo}/blob/main/.github/COLLABORATORS) count. ` +
+              `The **PR author** counts as approved if they are on that list (no self-Approve button on GitHub).\n\n` +
               `1. Open the PR on GitHub.\n` +
               `2. Go to **Files changed** (or use the review bar on **Conversation**).\n` +
               `3. Click **Review changes** (green button, top right).\n` +
@@ -184,13 +228,20 @@ jobs:
 
             let body =
               `## Collaborator approval status\n\n` +
+              ruleNote +
               howToApprove +
               `| | Count |\n|--|------|\n` +
-              `| Required (majority) | **${required}** of ${collaborators.length} |\n` +
-              `| Approved | **${approved.length}** |\n\n`;
+              `| Required | **${required}** |\n` +
+              `| Approved (listed collaborators) | **${approved.length}** of ${collaborators.length} |\n\n`;
 
             if (approved.length > 0) {
-              body += `Approved: ${approved.map((a) => '`' + a + '`').join(', ')}\n\n`;
+              const approvedLabels = approved.map((login) => {
+                if (login === author && authorIsCollaborator) {
+                  return `\`${login}\` (author, counted automatically)`;
+                }
+                return `\`${login}\``;
+              });
+              body += `Counted as approved: ${approvedLabels.join(', ')}\n\n`;
             }
 
             const pending = collaborators.filter((c) => !approved.includes(c));
@@ -231,12 +282,18 @@ jobs:
             }
 
             if (majorityMet) {
-              await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: prNumber,
-                labels: ['ready-to-merge'],
-              });
+              await ensureLabel('ready-to-merge');
+              try {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  labels: ['ready-to-merge'],
+                });
+                core.info('Applied label ready-to-merge');
+              } catch (e) {
+                core.setFailed(`Could not add ready-to-merge label: ${e.message}`);
+              }
             } else {
               try {
                 await github.rest.issues.removeLabel({

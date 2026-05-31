@@ -1,6 +1,7 @@
 ## Summary
 
 <!-- What does this PR change and why? Link issues: Fixes #123, relates to [BUG #N] -->
+<!-- When you open this PR, a workflow prepends [Pull Request #N] to the title automatically. -->
 
 <!-- Optional merge commit sync (see docs/guides/PR_GOVERNANCE.md):
      Put [USE_PR_TITLE] anywhere in the PR title to use the title as the merge commit subject.

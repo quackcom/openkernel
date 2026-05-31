@@ -1,6 +1,7 @@
 name: Feature request
 description: Suggest a new feature or enhancement for openkernel
 title: "[Feature Request] "
+# Label name must match .github/issue-labels.json exactly (feature-request)
 labels:
   - feature-request
 body:

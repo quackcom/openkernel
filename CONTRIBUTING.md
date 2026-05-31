@@ -10,7 +10,7 @@ openkernel separates **submitting ideas** from **landing changes in the project*
 
 You do **not** need write access to participate:
 
-- **Issues** — bug reports, feature requests, wiki suggestions (use the templates)
+- **Issues** — bug reports, feature requests, wiki suggestions, questions (use the templates)
 - **Pull requests** — you may fork the repo, open a PR, and propose code changes for **review**
 
 ### Limited to approved collaborators
@@ -60,6 +60,8 @@ When enough listed collaborators have approved, the [PR governance workflow](doc
 
 Full steps, majority math, and `gh pr review` usage: **[PR governance guide](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request)**.
 
+**PR author:** If you are listed in `.github/COLLABORATORS`, you count as approved automatically; other listed collaborators still **Approve** on GitHub as needed for majority. See [PR governance](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request).
+
 ## Our values
 
 - **Open collaboration** — we grow the project together.
@@ -75,13 +77,18 @@ Full steps, majority math, and `gh pr review` usage: **[PR governance guide](doc
 
 ## Issue templates
 
-| Template | Label | Title format |
-|----------|-------|--------------|
+| Template | Label (exact name) | Title format |
+|----------|-------------------|--------------|
 | **Bug report** | `bug` | `[BUG #N]` |
 | **Feature request** | `feature-request` | `[Feature Request #N]` |
 | **Wiki suggestion** | `wiki-suggestion` | `[Wiki Suggestion #N]` |
+| **Question** | `question` | `[Question #N]` |
 
-GitHub Actions assign sequential IDs (one at a time per label if many issues arrive together).
+Pull requests opened on GitHub get **`[Pull Request #N]`** prepended to the title automatically (all PRs, not only from a template).
+
+Canonical label names live in [`.github/issue-labels.json`](.github/issue-labels.json). The **Sync issue labels** workflow creates or updates them on `main` (you can also run it manually under **Actions**). Names are **case-sensitive** and must use hyphens as shown (`feature-request`, not `Feature Request` or `feature_request`).
+
+GitHub Actions assign sequential IDs when the template label is applied (workflows listen for the `labeled` event; if an old issue was never numbered, remove and re-add the label to re-run).
 
 ### Bug reports
 
@@ -94,6 +101,10 @@ Describe the problem, proposed solution, and why it helps the project.
 ### Wiki suggestions
 
 Name the wiki page(s), what should change, and why. Collaborators apply accepted suggestions to the wiki.
+
+### Questions
+
+Use the **Question** template for help with building, running, or understanding openkernel. Not for bugs or feature proposals.
 
 ## Code contributions
 
