@@ -55,8 +55,10 @@ Optional later: CI (`make all`) + AI review hints. See [PR governance guide](htt
 | Template | Label | Auto title |
 |----------|-------|------------|
 | Bug report | `bug` | `[BUG #N]` |
-| Feature request | `feature-request` | `[Feature Request #N]` |
-| Wiki suggestion | `wiki-suggestion` | `[Wiki Suggestion #N]` |
+| Feature request | `feature-request` (exact) | `[Feature Request #N]` |
+| Wiki suggestion | `wiki-suggestion` (exact) | `[Wiki Suggestion #N]` |
+
+Label names are defined in the repo [`.github/issue-labels.json`](https://github.com/quackcom/openkernel/blob/main/.github/issue-labels.json).
 
 Each type has its own numbering queue — parallel submissions are processed one at a time per category.
 

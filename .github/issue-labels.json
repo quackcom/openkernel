@@ -1,0 +1,17 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Bug report (openkernel issue template)"
+  },
+  {
+    "name": "feature-request",
+    "color": "a2eeef",
+    "description": "Feature request (openkernel issue template)"
+  },
+  {
+    "name": "wiki-suggestion",
+    "color": "0075ca",
+    "description": "Wiki or documentation suggestion (openkernel issue template)"
+  }
+]

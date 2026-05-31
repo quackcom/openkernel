@@ -1,4 +1,4 @@
-# Assigns [Wiki Suggestion #N] to issue titles for every issue labeled "wiki-suggestion".
+# Assigns [Wiki Suggestion #N] when label "wiki-suggestion" is applied (see .github/issue-labels.json).
 # Triggers on `labeled` because issue-form labels are applied after `opened`.
 
 name: Assign wiki suggestion number

@@ -1,6 +1,7 @@
 name: Wiki suggestion
 description: Suggest an improvement to the openkernel wiki or documentation
 title: "[Wiki Suggestion] "
+# Label name must match .github/issue-labels.json exactly (wiki-suggestion)
 labels:
   - wiki-suggestion
 body:

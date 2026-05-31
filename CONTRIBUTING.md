@@ -77,11 +77,13 @@ Full steps, majority math, and `gh pr review` usage: **[PR governance guide](doc
 
 ## Issue templates
 
-| Template | Label | Title format |
-|----------|-------|--------------|
+| Template | Label (exact name) | Title format |
+|----------|-------------------|--------------|
 | **Bug report** | `bug` | `[BUG #N]` |
 | **Feature request** | `feature-request` | `[Feature Request #N]` |
 | **Wiki suggestion** | `wiki-suggestion` | `[Wiki Suggestion #N]` |
+
+Canonical label names live in [`.github/issue-labels.json`](.github/issue-labels.json). The **Sync issue labels** workflow creates or updates them on `main` (you can also run it manually under **Actions**). Names are **case-sensitive** and must use hyphens as shown (`feature-request`, not `Feature Request` or `feature_request`).
 
 GitHub Actions assign sequential IDs when the template label is applied (workflows listen for the `labeled` event; if an old issue was never numbered, remove and re-add the label to re-run).
 

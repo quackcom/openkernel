@@ -1,4 +1,4 @@
-# Assigns [Feature Request #N] to issue titles for every issue labeled "feature-request".
+# Assigns [Feature Request #N] when label "feature-request" is applied (see .github/issue-labels.json).
 # Triggers on `labeled` because issue-form labels are applied after `opened` (see assign-bug-number.yml).
 
 name: Assign feature request number
