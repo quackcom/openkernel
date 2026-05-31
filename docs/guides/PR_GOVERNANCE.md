@@ -35,7 +35,15 @@ Workflow **PR governance** (`.github/workflows/pr-governance.yml`):
 - **On collaborator approval:** counts **Approved** reviews from `.github/COLLABORATORS`; when **strict majority** is reached, adds label `ready-to-merge`.
 - **On merge:** if the PR title contains `[USE_PR_TITLE]` and/or the description contains `[USE_PR_DESC]`, the workflow rewrites the merge/squash commit message on the base branch (markers are stripped). Only runs when that merge commit is still the branch tip.
 
-Majority rule: **more than half** of listed collaborators must submit an **Approved** review. This applies to **all** PRs, including those opened by collaborators.
+Majority rule:
+
+| Collaborators listed | Approvals needed for `ready-to-merge` |
+|----------------------|----------------------------------------|
+| **2** | **1** approval from the **other** person (not the PR author — GitHub blocks self-approval) |
+| **3+** | Strict majority: more than half must **Approve** |
+| **1** | 1 approval (usually blocked if you are the author; use ruleset bypass or add a second collaborator) |
+
+The label is applied when someone submits an **Approve** review (workflow runs on each review and on PR open/update). It is **not** added on open without a review.
 
 ## How to approve a pull request
 
@@ -61,7 +69,18 @@ Approvals are done **on GitHub**, not in git or the terminal. Only users in [`.g
 
 ### Single collaborator (solo maintainer)
 
-If only **one** username is in `COLLABORATORS`, majority is **1** approval — that user approves the PR (often their own). In **Settings → Rules → Rulesets**, you may need to allow administrators/collaborators to approve their own PRs if GitHub blocks self-approval.
+GitHub **does not allow** the PR author to click **Approve** on their own pull request. That message is from GitHub, not openkernel — and **no ruleset setting turns self-approval on**.
+
+With only one name in `COLLABORATORS` (e.g. you open and review your own PR), pick one of these:
+
+| Approach | What to do |
+|----------|------------|
+| **A. Bypass for admins** (common for solo repos) | Ruleset on `main`: add your user (or **Repository admins**) to **Bypass list**. You still open PRs for history, but you **merge** without needing an **Approve** review. The bot’s `ready-to-merge` label may never appear until you add workflow logic for solo maintainers (below). |
+| **B. Second reviewer** | Add another GitHub user to the repo and to `COLLABORATORS`; they submit **Approve** on your PRs. |
+| **C. Lower GitHub’s approval gate** | Ruleset: **Required approvals** = `0` (or disable required review). Use the bot comment + `ready-to-merge` as your process signal only. |
+| **D. Solo-maintainer workflow** | Extend `pr-governance.yml` so when `COLLABORATORS` has one user and they authored the PR, the workflow adds `ready-to-merge` on open (GitHub approval still impossible; process gate moves to “reviewed by you” + merge). |
+
+**Recommended for a one-person project:** **A** or **D**, plus optional **C** if the merge button stays blocked.
 
 ### Approving from the command line (optional)
 
@@ -167,7 +186,7 @@ Both work with `CODEOWNERS`, required reviews, and the `ready-to-merge` label wo
 | Ruleset name | `Protect main` |
 | Enforcement | **Active** |
 | Target branches | Include default branch **or** branch name pattern `main` |
-| Bypass list | Empty (or only repo admins for emergencies) |
+| Bypass list | **Repository admins** (required if you are the only maintainer — see below) |
 
 **Rules to enable:**
 
@@ -192,6 +211,37 @@ Both work with `CODEOWNERS`, required reviews, and the `ready-to-merge` label wo
 - **Human:** clicks **Merge** when both look good (and CI when added).
 
 Do **not** enable “Require merge queue” unless you need it — overkill for a small repo.
+
+### Solo maintainer ruleset (one person on the repo)
+
+If you are the only merger and reviewer, use this instead of the strict table above:
+
+| Rule | Solo-friendly setting |
+|------|------------------------|
+| Bypass list | **Repository admins** (your account must be admin on the repo) |
+| Required approvals | **0**, *or* keep **1** but rely on **bypass** to merge (you still cannot self-**Approve**) |
+| Require review from Code Owners | **Off** (with one person, you are the author *and* the code owner — GitHub blocks self-approval) |
+| Require conversation resolution | **Off** (optional; can block merge if bot threads are open) |
+| Restrict updates | On (still blocks direct `git push` to `main` unless bypassed) |
+
+You open PRs for history and review; you **merge** using admin bypass, not by approving your own PR.
+
+### “Cannot update this protected ref” when merging
+
+GitHub shows this when merging would **update `main`** but the ruleset (or branch protection) **does not allow it**. Common causes on openkernel:
+
+| Cause | What you see | Fix |
+|-------|----------------|-----|
+| **Missing approval** | Merge button disabled or error on merge; “review required” | Add a second approver, **or** set required approvals to **0**, **or** add **Repository admins** to the ruleset **Bypass list** and merge as admin |
+| **Code owner review required** | Waiting on `@quackcom` (you) | Turn off **Require review from Code Owners** for solo work, or get another user to approve |
+| **Unresolved conversations** | “Conversation must be resolved” | On the PR **Conversation** tab, resolve threads (including bot comments if GitHub treats them as blocking) |
+| **Failed / missing CI** | Required check stuck | Ruleset: turn off required status checks until a `build` workflow exists, or fix CI |
+| **Not allowed to bypass** | You are not admin / not on bypass list | Repo **Settings → Collaborators**: confirm you are **Admin**; ruleset **Bypass list** → add **Repository admins** |
+| **After merge: Actions sync** | Merge succeeded but workflow failed updating `main` | Ruleset bypass: add **GitHub Actions** (only needed if you use `[USE_PR_TITLE]` / `[USE_PR_DESC]`) |
+
+**Quick fix (most solo repos):**  
+**Settings → Rules → Rulesets** → edit `Protect main` → **Bypass list** → add **Repository admins** → save.  
+Then open the PR → **Merge pull request** (you do not need a self-approval if bypass applies).
 
 ### Classic equivalent (if you skip rulesets)
 

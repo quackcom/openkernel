@@ -13,5 +13,10 @@
     "name": "wiki-suggestion",
     "color": "0075ca",
     "description": "Wiki or documentation suggestion (openkernel issue template)"
+  },
+  {
+    "name": "ready-to-merge",
+    "color": "0e8a16",
+    "description": "Collaborator majority approval met (PR governance workflow)"
   }
 ]
