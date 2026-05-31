@@ -6,7 +6,7 @@ name: PR governance
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
   pull_request_review:
     types: [submitted]
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
         type: number
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -83,8 +83,8 @@ jobs:
               `| Flag | Where | Effect |\n|------|--------|--------|\n` +
               `| \`[USE_PR_TITLE]\` | PR **title** (not inside HTML comments) | Commit **subject** = title without markers or \`[Pull Request #N]\` |\n` +
               `| \`[USE_PR_DESC]\` | **Summary** section only (not inside \`<!-- -->\`) | Commit **body** = Summary text only |\n` +
-              `After merge, the workflow rewrites the tip commit if it is still \`main\` HEAD. ` +
-              `Add **GitHub Actions** to ruleset bypass if the push is blocked.`;
+              `When majority approval is met and \`ready-to-merge\` is applied, the workflow merges ` +
+              `the PR automatically with the cleaned commit message. No force-push needed.`;
 
             const body =
               `## PR summary (automated)\n\n` +
@@ -280,6 +280,7 @@ jobs:
               });
             }
 
+            let labelJustApplied = false;
             if (majorityMet) {
               await ensureLabel('ready-to-merge');
               try {
@@ -290,6 +291,7 @@ jobs:
                   labels: ['ready-to-merge'],
                 });
                 core.info('Applied label ready-to-merge');
+                labelJustApplied = true;
               } catch (e) {
                 core.setFailed(`Could not add ready-to-merge label: ${e.message}`);
               }
@@ -303,5 +305,80 @@ jobs:
                 });
               } catch (e) {
                 core.info('ready-to-merge label not present');
+              }
+            }
+
+            // Auto-merge with custom commit message if flags are set
+            if (majorityMet) {
+              const isTriggerEvent =
+                github.event_name === 'pull_request_review' ||
+                (github.event_name === 'pull_request' && context.payload.action === 'labeled');
+
+              if (isTriggerEvent) {
+                const title = pr.title || '';
+                const body = pr.body || '';
+
+                const stripHtmlComments = (text) =>
+                  (text || '').replace(/<!--[\s\S]*?-->/g, '');
+
+                const summaryVisible = stripHtmlComments(
+                  (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+                );
+
+                const useTitle =
+                  /\[USE_PR_TITLE\]/i.test(title) ||
+                  /\[USE_PR_TITLE\]/i.test(summaryVisible);
+                const useDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
+
+                if (useTitle || useDesc) {
+                  const cleanPrTitle = (raw) =>
+                    (raw || '')
+                      .replace(/\[USE_PR_TITLE\]/gi, '')
+                      .replace(/\[USE_PR_DESC\]/gi, '')
+                      .replace(/^\[Pull Request #\d+\]\s*/i, '')
+                      .replace(/\s+/g, ' ')
+                      .trim();
+
+                  const extractSummary = (bodyText) => {
+                    const visible = stripHtmlComments(bodyText);
+                    const match = visible.match(
+                      /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+                    );
+                    if (!match) return '';
+                    return match[1]
+                      .replace(/\[USE_PR_TITLE\]/gi, '')
+                      .replace(/\[USE_PR_DESC\]/gi, '')
+                      .split('\n')
+                      .map((line) => line.trimEnd())
+                      .filter((line) => line.trim().length > 0)
+                      .join('\n')
+                      .trim();
+                  };
+
+                  const newTitle = useTitle ? cleanPrTitle(title) : null;
+                  let newBody = null;
+                  if (useDesc) {
+                    newBody = extractSummary(body);
+                  }
+
+                  if (useTitle && !newTitle) {
+                    core.setFailed('USE_PR_TITLE would produce empty commit subject');
+                    return;
+                  }
+
+                  try {
+                    const mergeResult = await github.rest.pulls.merge({
+                      owner,
+                      repo,
+                      pull_number: prNumber,
+                      merge_method: 'merge',
+                      commit_title: newTitle,
+                      commit_message: newBody || '',
+                    });
+                    core.info(`Auto-merged PR #${prNumber} at ${mergeResult.data.sha}`);
+                  } catch (e) {
+                    core.setFailed(`Auto-merge failed: ${e.message}`);
+                  }
+                }
               }
             }

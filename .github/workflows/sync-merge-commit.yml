@@ -1,5 +1,6 @@
-# Rewrites the merge/squash commit on main when [USE_PR_TITLE] / [USE_PR_DESC] are set on the PR.
-# Must exist on the default branch (main) to run. After merging a PR, check the comment from this workflow.
+# Verifies merge commit message when [USE_PR_TITLE] / [USE_PR_DESC] are set on the PR.
+# The actual merge with custom message is handled by pr-governance.yml at approval time.
+# This workflow runs post-merge as a verification/safety net.
 
 name: Sync merge commit
 
@@ -9,23 +10,20 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'Merged PR number to sync (manual retry)'
+        description: 'Merged PR number to verify'
         required: true
         type: number
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
-env:
-  FORCE_PUSH_TOKEN: ${{ secrets.FORCE_PUSH_TOKEN }}
-
 jobs:
-  sync:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync merge commit message from PR flags
+      - name: Verify merge commit message
         uses: actions/github-script@v7
         with:
           script: |
@@ -128,9 +126,8 @@ jobs:
             if (!useTitle && !useDesc) {
               await postStatus(
                 prNumber,
-                '## Merge commit sync\n\n⏭️ Skipped: no `[USE_PR_TITLE]` in the PR title (or visible Summary) ' +
-                  'and no `[USE_PR_DESC]` in the **Summary** section (not inside HTML comments).\n\n' +
-                  'Put flags on the **PR** before merging — they are removed from the final commit.'
+                '## Merge commit sync\n\n⏭️ Skipped: no `[USE_PR_TITLE]` or `[USE_PR_DESC]` flags found. ' +
+                  'The commit message was used as-is from the merge.'
               );
               core.info('No merge-commit flags found.');
               return;
@@ -161,38 +158,6 @@ jobs:
               return;
             }
 
-            const baseRef = pr.base.ref;
-            let refSha = null;
-            for (let attempt = 1; attempt <= 5; attempt++) {
-              const { data: ref } = await github.rest.git.getRef({
-                owner,
-                repo,
-                ref: `heads/${baseRef}`,
-              });
-              refSha = ref.object.sha;
-              if (refSha === mergeSha) break;
-              core.info(
-                `Waiting for ${baseRef} tip to match merge commit (attempt ${attempt}/5)...`
-              );
-              await new Promise((r) => setTimeout(r, 3000));
-            }
-
-            if (refSha !== mergeSha) {
-              await postStatus(
-                prNumber,
-                '## Merge commit sync\n\n❌ Skipped: merge commit `' +
-                  mergeSha.slice(0, 7) +
-                  '` is not the tip of `' +
-                  baseRef +
-                  '` (tip is `' +
-                  refSha.slice(0, 7) +
-                  '`). Another commit landed on `main` first.\n\n' +
-                  'Re-run **Actions → Sync merge commit → Run workflow** with this PR number after `main` is stable, ' +
-                  'or add **GitHub Actions** to the ruleset bypass list if push was denied.'
-              );
-              return;
-            }
-
             const { data: commit } = await github.rest.git.getCommit({
               owner,
               repo,
@@ -202,69 +167,22 @@ jobs:
             const lines = commit.message.split('\n');
             const curTitle = lines[0] || '';
             const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
-
             const newTitle = cleanTitle !== null ? cleanTitle : curTitle;
-            let newBody = curBody;
-            if (useDesc && cleanDesc) {
-              newBody = cleanDesc;
-            }
-            const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
+            const newBody = (useDesc && cleanDesc) ? cleanDesc : curBody;
+            const expectedMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
 
-            if (newMessage === commit.message) {
+            if (commit.message === expectedMessage) {
               await postStatus(
                 prNumber,
-                '## Merge commit sync\n\n✅ Commit message already matches PR flags (nothing to change).'
+                '## Merge commit sync\n\n✅ Merge commit message already matches PR flags (set by auto-merge in `pr-governance.yml`).'
               );
-              return;
-            }
-
-            try {
-              const { data: newCommit } = await github.rest.git.createCommit({
-                owner,
-                repo,
-                message: newMessage,
-                tree: commit.tree.sha,
-                parents: commit.parents.map((p) => p.sha),
-              });
-
-              // Use PAT to bypass ruleset (must have contents:write on the repo)
-              const headers = {};
-              if (process.env.FORCE_PUSH_TOKEN) {
-                headers.authorization = `Bearer ${process.env.FORCE_PUSH_TOKEN}`;
-              }
-              await github.request('PATCH /repos/{owner}/{repo}/git/refs/heads/{ref}', {
-                owner,
-                repo,
-                ref: baseRef,
-                sha: newCommit.sha,
-                force: true,
-                headers,
-              });
-
+            } else {
               await postStatus(
                 prNumber,
-                '## Merge commit sync\n\n✅ Updated merge commit on `' +
-                  baseRef +
-                  '`:\n\n```\n' +
-                  newMessage +
-                  '\n```\n\n' +
-                  '(Flags `[USE_PR_TITLE]` / `[USE_PR_DESC]` are **not** kept in the commit — only the text above.)'
+                '## Merge commit sync\n\n⚠️ Flags were set (`[USE_PR_TITLE]` / `[USE_PR_DESC]`) but the merge ' +
+                  'commit message does not match the expected value. The PR may have been merged manually.\n\n' +
+                  'Expected subject: `' + newTitle + '`\n\n' +
+                  'To get the desired message, close a new PR with the flags set and let the governance workflow ' +
+                  'handle the merge automatically.'
               );
-
-              core.summary
-                .addHeading('Merge commit synced')
-                .addCodeBlock(newMessage)
-                .write();
-            } catch (e) {
-              await postStatus(
-                prNumber,
-                '## Merge commit sync\n\n❌ Failed to update `main`: `' +
-                  e.message +
-                  '`.\n\n' +
-                  'Add **GitHub Actions** to your **ruleset bypass list** (Settings → Rules → Rulesets), then re-run ' +
-                  '**Sync merge commit** with PR #' +
-                  prNumber +
-                  '.'
-              );
-              core.setFailed(e.message);
             }
