@@ -145,7 +145,7 @@ For openkernel, prefer: **bot comments + label → human collaborator clicks Mer
 
 ### Merge commit title and description
 
-After merge, **sync-merge-commit** rewrites the merge/squash commit on `main` when flags are set (only if that commit is still branch HEAD).
+After merge, workflow **[Sync merge commit](https://github.com/quackcom/openkernel/blob/main/.github/workflows/sync-merge-commit.yml)** rewrites the merge/squash commit on `main` when flags are set. **This workflow must be on `main`** (merge the governance PR first). It posts a comment on the PR explaining success or skip.
 
 | Flag | Where to put it | Merge commit gets |
 |------|-----------------|-------------------|
@@ -173,6 +173,16 @@ Add OKFS and shell commands. Fixes #42.
 → commit body is those two lines (markers stripped), not the checklist below.
 
 Add **GitHub Actions** to the ruleset **bypass list** if rewriting the commit on `main` fails with “protected ref”.
+
+### Troubleshooting: custom message does not appear on `main`
+
+| Check | Action |
+|-------|--------|
+| Workflow on `main`? | **Actions** tab must list **Sync merge commit**. If missing, merge the PR that adds `.github/workflows/sync-merge-commit.yml`. |
+| Flags on the PR? | `[USE_PR_TITLE]` in title or visible Summary; `[USE_PR_DESC]` only in **Summary** (not in `<!-- comments -->`). |
+| PR comment | After merge, read the bot comment **Merge commit sync** on the PR. |
+| Protected `main` | Ruleset bypass → **GitHub Actions**. |
+| Manual retry | **Actions → Sync merge commit → Run workflow** → enter merged PR number. |
 
 ## Assigning PRs to people
 

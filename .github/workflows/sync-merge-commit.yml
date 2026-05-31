@@ -1,0 +1,261 @@
+# Rewrites the merge/squash commit on main when [USE_PR_TITLE] / [USE_PR_DESC] are set on the PR.
+# Must exist on the default branch (main) to run. After merging a PR, check the comment from this workflow.
+
+name: Sync merge commit
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Merged PR number to sync (manual retry)'
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync merge commit message from PR flags
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const marker = '<!-- sync-merge-commit-status -->';
+
+            const postStatus = async (prNumber, body) => {
+              const text = marker + '\n' + body;
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: prNumber,
+              });
+              const existing = comments.find(
+                (c) => c.user.type === 'Bot' && c.body && c.body.includes(marker)
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: text,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: text,
+                });
+              }
+            };
+
+            const stripHtmlComments = (text) =>
+              (text || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            const extractSummary = (body) => {
+              const visible = stripHtmlComments(body);
+              const match = visible.match(
+                /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+              );
+              if (!match) return '';
+              return match[1]
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .split('\n')
+                .map((line) => line.trimEnd())
+                .filter((line) => line.trim().length > 0)
+                .join('\n')
+                .trim();
+            };
+
+            const cleanPrTitle = (raw) =>
+              (raw || '')
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .replace(/^\[Pull Request #\d+\]\s*/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            let prNumber;
+            if (context.eventName === 'workflow_dispatch') {
+              prNumber = Number(context.payload.inputs.pr_number);
+            } else {
+              const payloadPr = context.payload.pull_request;
+              if (!payloadPr.merged) {
+                core.info('PR closed without merge; skipping.');
+                return;
+              }
+              prNumber = payloadPr.number;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (!pr.merged) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ Skipped: PR is not merged yet.'
+              );
+              core.setFailed('PR is not merged.');
+              return;
+            }
+
+            const title = pr.title || '';
+            const body = pr.body || '';
+            const summaryVisible = stripHtmlComments(
+              (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+            );
+
+            const useTitle =
+              /\[USE_PR_TITLE\]/i.test(title) ||
+              /\[USE_PR_TITLE\]/i.test(summaryVisible);
+            const useDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
+
+            if (!useTitle && !useDesc) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ Skipped: no `[USE_PR_TITLE]` in the PR title (or visible Summary) ' +
+                  'and no `[USE_PR_DESC]` in the **Summary** section (not inside HTML comments).\n\n' +
+                  'Put flags on the **PR** before merging — they are removed from the final commit.'
+              );
+              core.info('No merge-commit flags found.');
+              return;
+            }
+
+            const cleanTitle = useTitle ? cleanPrTitle(title) : null;
+            let cleanDesc = null;
+            if (useDesc) {
+              cleanDesc = extractSummary(body);
+            }
+
+            if (useTitle && !cleanTitle) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Failed: `[USE_PR_TITLE]` would produce an empty commit subject.'
+              );
+              core.setFailed('Empty commit subject.');
+              return;
+            }
+
+            const mergeSha = pr.merge_commit_sha;
+            if (!mergeSha) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Failed: no `merge_commit_sha` on this PR.'
+              );
+              core.setFailed('No merge_commit_sha.');
+              return;
+            }
+
+            const baseRef = pr.base.ref;
+            let refSha = null;
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              const { data: ref } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+              });
+              refSha = ref.object.sha;
+              if (refSha === mergeSha) break;
+              core.info(
+                `Waiting for ${baseRef} tip to match merge commit (attempt ${attempt}/5)...`
+              );
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+
+            if (refSha !== mergeSha) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Skipped: merge commit `' +
+                  mergeSha.slice(0, 7) +
+                  '` is not the tip of `' +
+                  baseRef +
+                  '` (tip is `' +
+                  refSha.slice(0, 7) +
+                  '`). Another commit landed on `main` first.\n\n' +
+                  'Re-run **Actions → Sync merge commit → Run workflow** with this PR number after `main` is stable, ' +
+                  'or add **GitHub Actions** to the ruleset bypass list if push was denied.'
+              );
+              return;
+            }
+
+            const { data: commit } = await github.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: mergeSha,
+            });
+
+            const lines = commit.message.split('\n');
+            const curTitle = lines[0] || '';
+            const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
+
+            const newTitle = cleanTitle !== null ? cleanTitle : curTitle;
+            let newBody = curBody;
+            if (useDesc && cleanDesc) {
+              newBody = cleanDesc;
+            }
+            const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
+
+            if (newMessage === commit.message) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ Commit message already matches PR flags (nothing to change).'
+              );
+              return;
+            }
+
+            try {
+              const { data: newCommit } = await github.rest.git.createCommit({
+                owner,
+                repo,
+                message: newMessage,
+                tree: commit.tree.sha,
+                parents: commit.parents.map((p) => p.sha),
+              });
+
+              await github.rest.git.updateRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+                sha: newCommit.sha,
+                force: true,
+              });
+
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ Updated merge commit on `' +
+                  baseRef +
+                  '`:\n\n```\n' +
+                  newMessage +
+                  '\n```\n\n' +
+                  '(Flags `[USE_PR_TITLE]` / `[USE_PR_DESC]` are **not** kept in the commit — only the text above.)'
+              );
+
+              core.summary
+                .addHeading('Merge commit synced')
+                .addCodeBlock(newMessage)
+                .write();
+            } catch (e) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Failed to update `main`: `' +
+                  e.message +
+                  '`.\n\n' +
+                  'Add **GitHub Actions** to your **ruleset bypass list** (Settings → Rules → Rulesets), then re-run ' +
+                  '**Sync merge commit** with PR #' +
+                  prNumber +
+                  '.'
+              );
+              core.setFailed(e.message);
+            }
