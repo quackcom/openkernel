@@ -34,6 +34,7 @@ DISPLAY_C = $(KERNEL_DIR)/display.c
 MEMORY_C = $(KERNEL_DIR)/memory.c
 PROCESS_C = $(KERNEL_DIR)/process.c
 SYNC_C   = $(KERNEL_DIR)/sync.c
+FS_C     = $(KERNEL_DIR)/fs.c
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -50,13 +51,18 @@ DISPLAY_OBJ = $(BUILD_DIR)/display.o
 MEMORY_OBJ = $(BUILD_DIR)/memory.o
 PROCESS_OBJ = $(BUILD_DIR)/process.o
 SYNC_OBJ   = $(BUILD_DIR)/sync.o
+FS_OBJ     = $(BUILD_DIR)/fs.o
 
 # Output files
 KERNEL_ELF = $(BUILD_DIR)/kernel.elf
 ISO = $(BUILD_DIR)/openkernel.iso
 
+# ISO tools (override if installed elsewhere)
+GRUB_MKRESCUE ?= grub-mkrescue
+XORRISO ?= xorriso
+
 # Phony targets
-.PHONY: all clean run iso check-tools
+.PHONY: all clean run iso iso-wsl check-tools check-tools-iso help
 
 # Default target
 all: $(KERNEL_ELF)
@@ -66,7 +72,7 @@ $(BUILD_DIR):
 	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 
 # Build kernel ELF executable
-$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(SYNC_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
+$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(SYNC_OBJ) $(FS_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
 	@echo "Linking kernel..."
 	$(LD) $(LDFLAGS) -o $@ $^
 	@echo "Kernel built: $@"
@@ -124,18 +130,30 @@ $(SYNC_OBJ): $(SYNC_C) $(KERNEL_DIR)/sync.h $(KERNEL_DIR)/process.h | $(BUILD_DI
 	@echo "Compiling synchronization primitives..."
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(SYNC_C)
 
+$(FS_OBJ): $(FS_C) $(KERNEL_DIR)/fs.h $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | $(BUILD_DIR)
+	@echo "Compiling filesystem..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(FS_C)
+
 $(KERNEL_OBJ): $(KERNEL_C) $(KERNEL_HEADER) | $(BUILD_DIR)
 	@echo "Compiling kernel..."
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(KERNEL_C)
 
-# Create ISO image (requires GRUB)
+# Create ISO image (requires grub-mkrescue + xorriso on PATH)
 iso: $(KERNEL_ELF)
 	@echo "Creating ISO image..."
 	@if not exist $(BUILD_DIR)\iso\boot\grub mkdir $(BUILD_DIR)\iso\boot\grub
 	@copy /Y $(subst /,\,$(KERNEL_ELF)) $(BUILD_DIR)\iso\boot\kernel.elf >nul
 	@copy /Y $(subst /,\,$(BOOT_DIR))\grub.cfg $(BUILD_DIR)\iso\boot\grub\grub.cfg >nul
-	-@grub-mkrescue -o $(ISO) $(BUILD_DIR)/iso 2>nul || echo "Warning: grub-mkrescue not found or failed, install GRUB tools and xorriso"
-	@echo "ISO created: $(ISO)"
+	@where $(GRUB_MKRESCUE) >nul 2>&1 || (echo. && echo ERROR: $(GRUB_MKRESCUE) not found on PATH. && echo. && echo   Windows: run   make iso-wsl   && echo   WSL install:  sudo apt install grub-pc-bin xorriso && echo   Or skip ISO:  make run   && echo. && echo   See docs/setup/SETUP_WINDOWS.md && exit /b 1)
+	@where $(XORRISO) >nul 2>&1 || (echo. && echo ERROR: $(XORRISO) not found on PATH. && echo   Install in WSL:  sudo apt install xorriso && echo   Or use:  make iso-wsl && exit /b 1)
+	$(GRUB_MKRESCUE) -o $(ISO) $(BUILD_DIR)/iso
+	@if not exist $(ISO) (echo ERROR: $(GRUB_MKRESCUE) did not create $(ISO) && exit /b 1)
+	@echo ISO created: $(ISO)
+
+# Build ISO using WSL (recommended on Windows)
+iso-wsl: $(KERNEL_ELF)
+	@echo "Building ISO via WSL..."
+	@wsl -e bash -lc "set -e; command -v grub-mkrescue >/dev/null || { echo 'Installing grub-pc-bin and xorriso in WSL...'; sudo apt-get update -qq && sudo apt-get install -y grub-pc-bin xorriso; }; cd \"$$(wslpath -u '$(CURDIR)')\" && $(MAKE) iso GRUB_MKRESCUE=grub-mkrescue XORRISO=xorriso"
 
 # Run with QEMU
 run: $(KERNEL_ELF)
@@ -149,11 +167,14 @@ run-iso: iso
 
 # Check if required tools are available
 check-tools:
-	@command -v $(CC) >/dev/null 2>&1 || (echo "Error: $(CC) not found" && exit 1)
-	@command -v $(ASM) >/dev/null 2>&1 || (echo "Error: $(ASM) not found" && exit 1)
-	@command -v $(LD) >/dev/null 2>&1 || (echo "Error: $(LD) not found" && exit 1)
-	@command -v qemu-system-i386 >/dev/null 2>&1 || (echo "Error: qemu-system-i386 not found" && exit 1)
-	@echo "All required tools found!"
+	@where $(CC) >nul 2>&1 || (echo Error: $(CC) not found && exit /b 1)
+	@where $(ASM) >nul 2>&1 || (echo Error: $(ASM) not found && exit /b 1)
+	@where $(LD) >nul 2>&1 || (echo Error: $(LD) not found && exit /b 1)
+	@where qemu-system-i386 >nul 2>&1 || (echo Error: qemu-system-i386 not found && exit /b 1)
+	@echo All required tools found!
+
+check-tools-iso:
+	@where $(GRUB_MKRESCUE) >nul 2>&1 && where $(XORRISO) >nul 2>&1 && (echo ISO tools found: $(GRUB_MKRESCUE), $(XORRISO)) || (echo ISO tools NOT found on Windows PATH. && echo Try: make iso-wsl && exit /b 1)
 
 # Clean build artifacts
 clean:
@@ -166,9 +187,11 @@ help:
 	@echo "openkernel Build System"
 	@echo "Targets:"
 	@echo "  make all        - Build kernel ELF (default)"
-	@echo "  make iso        - Create bootable ISO (requires GRUB)"
-	@echo "  make run        - Build and run with QEMU"
+	@echo "  make iso        - Create bootable ISO (grub-mkrescue + xorriso)"
+	@echo "  make iso-wsl    - Create ISO via WSL (Windows, recommended)"
+	@echo "  make run        - Build and run with QEMU (-kernel, no ISO)"
 	@echo "  make run-iso    - Build ISO and run with QEMU"
+	@echo "  make check-tools-iso - Verify grub-mkrescue and xorriso"
 	@echo "  make check-tools - Verify all required tools are installed"
 	@echo "  make clean      - Remove build artifacts"
 	@echo "  make help       - Show this help message"

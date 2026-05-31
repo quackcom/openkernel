@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a new feature or enhancement for openkernel
+title: "[Feature Request] "
+labels:
+  - feature-request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. This template adds the `feature-request` label automatically.
+        A maintainer workflow will assign a sequential ID like `[Feature Request #N]` to the title.
+        Please search existing issues before submitting.
+
+        **Note:** Direct code contributions are limited to approved collaborators. Anyone can propose features here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this feature solve? Who benefits?
+      placeholder: I want to persist OKFS files across reboots...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, links, related issues, or implementation notes.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I have searched for duplicate issues and explained the use case clearly.
+          required: true

@@ -11,6 +11,7 @@
 static uint32_t pmm_bitmap[PMM_MAX_PAGES / 32];
 static uint32_t pmm_page_count = 0;
 static uint32_t pmm_free_pages = 0;
+static uint32_t pmm_search_hint = 0;  /* Skip already-scanned used pages */
 
 /* External symbols from linker.ld */
 extern uint32_t _kernel_start;
@@ -50,8 +51,10 @@ static int pmm_get_bit(uint32_t index) {
 }
 
 static uint32_t pmm_find_free_page(void) {
-    for (uint32_t i = 0; i < pmm_page_count; i++) {
+    for (uint32_t n = 0; n < pmm_page_count; n++) {
+        uint32_t i = (pmm_search_hint + n) % pmm_page_count;
         if (!pmm_get_bit(i)) {
+            pmm_search_hint = (i + 1) % pmm_page_count;
             return i;
         }
     }
@@ -119,6 +122,8 @@ void pmm_init(uint32_t mem_lower, uint32_t mem_upper) {
         }
     }
 
+    pmm_search_hint = start_page_to_free;
+
     loading_status_done();
 
     printk("Memory: %d KB (%d total pages, %d free pages)\n",
@@ -143,6 +148,9 @@ void pmm_free_page(void* addr) {
 
     pmm_set_bit(index, 0);
     pmm_free_pages++;
+    if (index < pmm_search_hint) {
+        pmm_search_hint = index;
+    }
 }
 
 /* Virtual Memory Manager Functions */
@@ -205,7 +213,34 @@ void vmm_unmap_page(void* virt) {
     }
 }
 
+#define VMM_IDENTITY_PAGES   1024U
+#define VMM_KERNEL_PAGES     256U   /* 0x100000 / PAGE_SIZE */
+#define VMM_FB_EXTRA         17U    /* VGA text + 16 VGA graphics pages */
+#define VMM_VBE_PAGES        512U
+#define VMM_HEAP_PAGES       (HEAP_SIZE / PAGE_SIZE)
+#define VMM_TOTAL_STEPS      (VMM_IDENTITY_PAGES + VMM_KERNEL_PAGES + VMM_FB_EXTRA + VMM_VBE_PAGES + VMM_HEAP_PAGES)
+#define VMM_STATUS_TICK_INTERVAL 512U
+
+static void vmm_loading_tick(uint32_t *done, uint32_t total)
+{
+    (*done)++;
+    if ((*done % VMM_STATUS_TICK_INTERVAL) == 0 || *done >= total) {
+        int percent = (int)((*done * 100) / total);
+        if (percent > 100) {
+            percent = 100;
+        }
+        loading_status_set_progress(percent);
+        loading_status_tick();
+    }
+}
+
 void vmm_init(void) {
+    uint32_t vmm_done = 0;
+    const uint32_t vmm_total = VMM_TOTAL_STEPS;
+
+    loading_status_start("Virtual memory");
+    loading_status_set_progress(0);
+
     /* Allocate page directory */
     kernel_page_directory = (uint32_t*)PAGE_ALIGN_UP((uint32_t)pmm_alloc_page());
     current_page_directory = kernel_page_directory;
@@ -216,28 +251,33 @@ void vmm_init(void) {
     }
 
     /* Identity map first 4MB (for early boot) */
-    for (uint32_t i = 0; i < 1024; i++) {
+    for (uint32_t i = 0; i < VMM_IDENTITY_PAGES; i++) {
         vmm_map_page((void*)(i * PAGE_SIZE), (void*)(i * PAGE_SIZE),
                     PDE_WRITABLE | PDE_PRESENT);
+        vmm_loading_tick(&vmm_done, vmm_total);
     }
 
     /* Map higher-half kernel to existing physical kernel (at 1MB) */
     for (uint32_t i = 0; i < 0x100000; i += PAGE_SIZE) {
         vmm_map_page((void*)(0x100000 + i), (void*)(KERNEL_VIRTUAL_BASE + i), PDE_WRITABLE | PDE_PRESENT);
+        vmm_loading_tick(&vmm_done, vmm_total);
     }
 
     /* Map framebuffer regions directly (identity map for graphics) */
     /* VGA text buffer at 0xB8000 */
     vmm_map_page((void*)0xB8000, (void*)0xB8000, PDE_WRITABLE | PDE_PRESENT);
+    vmm_loading_tick(&vmm_done, vmm_total);
     /* VGA graphics buffer at 0xA0000 (Mode 0x13) - Map 64KB (16 pages) */
     for (uint32_t i = 0; i < 16; i++) {
         uint32_t addr = 0xA0000 + (i * PAGE_SIZE);
         vmm_map_page((void*)addr, (void*)addr, PDE_WRITABLE | PDE_PRESENT);
+        vmm_loading_tick(&vmm_done, vmm_total);
     }
     /* Bochs VBE framebuffer at 0xFD000000 - map 2MB for 800x600x32 */
-    for (uint32_t page = 0; page < 512; page++) {
+    for (uint32_t page = 0; page < VMM_VBE_PAGES; page++) {
         uint32_t phys_addr = 0xFD000000 + (page * 0x1000);
         vmm_map_page((void*)phys_addr, (void*)phys_addr, PDE_WRITABLE | PDE_PRESENT);
+        vmm_loading_tick(&vmm_done, vmm_total);
     }
 
     /* Map heap region */
@@ -245,8 +285,7 @@ void vmm_init(void) {
        Allocate and map each page of the heap into the virtual address space.
        This ensures that kmalloc can access the heap memory.
     */
-    uint32_t heap_pages = HEAP_SIZE / PAGE_SIZE;
-    for (uint32_t i = 0; i < heap_pages; i++) {
+    for (uint32_t i = 0; i < VMM_HEAP_PAGES; i++) {
         void* phys = pmm_alloc_page();
         if (!phys) {
             printk("VMM: Failed to allocate page for heap mapping at index %u\n", i);
@@ -254,7 +293,11 @@ void vmm_init(void) {
         }
         void* virt = (void*)(HEAP_START + i * PAGE_SIZE);
         vmm_map_page(phys, virt, PDE_WRITABLE | PDE_PRESENT);
+        vmm_loading_tick(&vmm_done, vmm_total);
     }
+
+    loading_status_set_progress(100);
+    loading_status_done();
 
     /* Enable paging */
     asm volatile ("mov %0, %%cr3" : : "r"(kernel_page_directory));

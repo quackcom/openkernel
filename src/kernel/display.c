@@ -599,8 +599,8 @@ void display_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t 
  * Gives readable text at 800x600: ~50 cols x 37 rows
  * ================================================================ */
 #define CHAR_SCALE 2
-#define CHAR_W (FONT_W * CHAR_SCALE)   /* 16 px wide */
-#define CHAR_H (FONT_H * CHAR_SCALE)   /* 16 px tall */
+#define CHAR_W DISPLAY_CHAR_W
+#define CHAR_H DISPLAY_CHAR_H
 
 
 
@@ -624,7 +624,7 @@ void display_putchar(char c, uint32_t x, uint32_t y, uint32_t color)
     for (int row = 0; row < FONT_H; row++) {
         uint8_t bitmap = glyph[row];
         for (int col = 0; col < FONT_W; col++) {
-            if (bitmap & (1 << col)) {
+            if (bitmap & (0x80 >> col)) {
                 /* Transparent background: only draw lit glyph pixels. */
                 for (int sy = 0; sy < CHAR_SCALE; sy++) {
                     for (int sx = 0; sx < CHAR_SCALE; sx++) {
@@ -634,6 +634,23 @@ void display_putchar(char c, uint32_t x, uint32_t y, uint32_t color)
                 }
             }
         }
+    }
+}
+
+void display_puts_line(const char *str, uint32_t x, uint32_t y, uint32_t color)
+{
+    if (!current_mode.available || x >= current_mode.width) return;
+
+    uint32_t max_chars = (current_mode.width - x) / CHAR_W;
+    if (max_chars == 0) return;
+
+    uint32_t cx = x;
+    while (*str && max_chars > 0) {
+        if (*str == '\n') break;
+        display_putchar(*str, cx, y, color);
+        cx += CHAR_W;
+        str++;
+        max_chars--;
     }
 }
 

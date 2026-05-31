@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "keyboard.h"
 #include "display.h"
+#include "fs.h"
 #include <stdarg.h>
 
 /* VGA Text Mode Constants */
@@ -333,10 +334,47 @@ static void append_gfx_prompt_line(const char *command)
     append_gfx_log(line);
 }
 
-static void render_pseudo_text_screen(void)
+#define GFX_CONSOLE_BG      display_rgb(0, 0, 0x40)
+#define GFX_PROMPT_Y        560
+#define GFX_PROMPT_BAR_Y    558
+#define GFX_PROMPT_BAR_H    24
+#define GFX_LOG_Y0          64
+#define GFX_LOG_LINE_STEP   (DISPLAY_CHAR_H + 4)
+
+static void build_pseudo_prompt(char *prompt, int max_len)
+{
+    const char *prefix = "> ";
+    int p = 0;
+
+    while (*prefix && p < max_len - 1) {
+        prompt[p++] = *prefix++;
+    }
+
+    for (int i = 0; i < pseudo_cmd_len && p < max_len - 1; i++) {
+        if (i == pseudo_cmd_cursor) {
+            prompt[p++] = '_';
+        }
+        prompt[p++] = pseudo_cmd[i];
+    }
+    if (pseudo_cmd_cursor >= pseudo_cmd_len && p < max_len - 1) {
+        prompt[p++] = '_';
+    }
+    prompt[p] = '\0';
+}
+
+static void render_pseudo_text_prompt(void)
 {
     const display_mode_t *mode = display_get_mode();
-    display_clear(display_rgb(0, 0, 0x40));
+    char prompt[80];
+
+    build_pseudo_prompt(prompt, (int)sizeof(prompt));
+    display_fill_rect(0, GFX_PROMPT_BAR_Y, mode->width, GFX_PROMPT_BAR_H, GFX_CONSOLE_BG);
+    display_puts_line(prompt, 20, GFX_PROMPT_Y, display_rgb(0xFF, 0xFF, 0x80));
+}
+
+static void render_pseudo_text_screen(void)
+{
+    display_clear(GFX_CONSOLE_BG);
     display_puts("openkernel Command Line", 20, 20, display_rgb(0xFF, 0xFF, 0xFF));
     display_puts("Type 'help' for available commands.", 20, 40, display_rgb(0xA0, 0xA0, 0xA0));
 
@@ -344,31 +382,11 @@ static void render_pseudo_text_screen(void)
     int start = gfx_log_count - lines;
     for (int i = 0; i < lines; i++) {
         int idx = (start + i) % GFX_LOG_LINES;
-        display_puts(gfx_log[idx], 20, 64 + (uint32_t)i * 18, display_rgb(0xFF, 0xFF, 0xFF));
+        display_puts_line(gfx_log[idx], 20, GFX_LOG_Y0 + (uint32_t)i * GFX_LOG_LINE_STEP,
+                          display_rgb(0xFF, 0xFF, 0xFF));
     }
 
-    /* Ensure prompt line is fully clean before drawing */
-    display_fill_rect(0, 558, mode->width, 20, display_rgb(0, 0, 0x40));
-
-    /* Build prompt with cursor marker at the correct position */
-    char prompt[80];
-    const char *prefix = "> ";
-    int p = 0;
-    while (*prefix && p < 79) prompt[p++] = *prefix++;
-
-    for (int i = 0; i < pseudo_cmd_len && p < 78; i++) {
-        if (i == pseudo_cmd_cursor) {
-            prompt[p++] = '_'; /* cursor marker */
-        }
-        prompt[p++] = pseudo_cmd[i];
-    }
-    if (pseudo_cmd_cursor >= pseudo_cmd_len && p < 79) {
-        prompt[p++] = '_'; /* cursor at end */
-    }
-    prompt[p] = '\0';
-
-    display_puts(prompt, 20, 560, display_rgb(0xFF, 0xFF, 0x80));
-    (void)mode;
+    render_pseudo_text_prompt();
 }
 
 static void render_graphics_test_screen(void)
@@ -397,7 +415,7 @@ static void render_graphics_test_screen(void)
 static void __attribute__((unused)) show_text_home_screen(void)
 {
     vga_clear();
-    printk("openkernel Kernel v0.2\n");
+    printk(KERNEL_VERSION_STRING "\n");
     printk("Built: " __DATE__ " " __TIME__ "\n\n");
     printk("=== System Ready ===\n");
     printk("Press Ctrl+T to toggle graphics test mode.\n");
@@ -656,7 +674,20 @@ static void vga_replace_current_input_line(const char *prompt, const char *input
 
 static void show_text_prompt(void)
 {
-    vga_replace_current_input_line("> ", cmd, cmd_cursor);
+    if (fs_edit_is_active()) {
+        char prefix[FS_MAX_PATH + 8];
+        size_t p = 0;
+        const char *tag = "edit:";
+        while (*tag && p < sizeof(prefix) - 1) prefix[p++] = *tag++;
+        const char *ep = fs_edit_path();
+        while (*ep && p < sizeof(prefix) - 1) prefix[p++] = *ep++;
+        if (p < sizeof(prefix) - 2) prefix[p++] = '>';
+        prefix[p++] = ' ';
+        prefix[p] = '\0';
+        vga_replace_current_input_line(prefix, cmd, cmd_cursor);
+    } else {
+        vga_replace_current_input_line("> ", cmd, cmd_cursor);
+    }
 }
 
 static void reboot_system(void)
@@ -683,23 +714,38 @@ static void text_console_log(const char *msg)
     printk("%s\n", msg);
 }
 
+static void show_help_main(void (*log_fn)(const char *))
+{
+    log_fn("Available commands:");
+    log_fn("help                - Show this help");
+    log_fn("help --os           - Show OS-related commands");
+    log_fn("clear               - Clear the console");
+    log_fn("reboot              - Restart the system");
+    log_fn("shutdown            - Power off the system");
+    log_fn("gfx                 - Enter graphics mode");
+    log_fn("layout us           - Set US keyboard layout");
+    log_fn("layout uk           - Set UK keyboard layout");
+    log_fn("layout it           - Set Italian keyboard layout");
+    log_fn("cmd.print(\"msg\")    - Print a message");
+    log_fn("help --fs           - Show filesystem commands");
+}
+
+static void show_help_os(void (*log_fn)(const char *))
+{
+    log_fn("OS commands:");
+    log_fn("os.version          - Show kernel version");
+    log_fn("os.bootinfo         - Show boot information");
+}
+
 static int execute_console_command(
     const char *command,
     void (*log_fn)(const char *),
     int graphics_console)
 {
     if (streq(command, "help")) {
-        log_fn("Available commands:");
-        log_fn("help                - Show this help");
-        log_fn("clear               - Clear the console");
-        log_fn("reboot              - Restart the system");
-        log_fn("shutdown            - Power off the system");
-        log_fn("gfx                 - Enter graphics mode");
-        log_fn("layout us           - Set US keyboard layout");
-        log_fn("layout uk           - Set UK keyboard layout");
-        log_fn("layout it           - Set Italian keyboard layout");
-        log_fn("cmd.print(\"msg\")    - Print a message");
-        log_fn("os.bootinfo         - Show boot information");
+        show_help_main(log_fn);
+    } else if (streq(command, "help --os")) {
+        show_help_os(log_fn);
     } else if (streq(command, "clear")) {
         if (graphics_console) {
             clear_gfx_log();
@@ -757,6 +803,8 @@ static int execute_console_command(
                 log_fn("Error: incomplete statement");
             }
         }
+    } else if (streq(command, "os.version")) {
+        log_fn(KERNEL_VERSION_STRING);
     } else if (streq(command, "os.bootinfo")) {
         log_fn("=== openkernel Boot Info ===");
         {
@@ -829,7 +877,11 @@ static void pseudo_console_execute(void)
     pseudo_cmd[pseudo_cmd_len] = '\0';
     if (pseudo_cmd_len > 0) {
         append_gfx_prompt_line(pseudo_cmd);
-        execute_console_command(pseudo_cmd, pseudo_console_log, 1);
+        if (fs_edit_is_active()) {
+            fs_edit_handle_line(pseudo_cmd, pseudo_console_log);
+        } else if (!fs_handle_command(pseudo_cmd, pseudo_console_log)) {
+            execute_console_command(pseudo_cmd, pseudo_console_log, 1);
+        }
     }
 
     pseudo_cmd_len = 0;
@@ -839,6 +891,13 @@ static void pseudo_console_execute(void)
 
 static void execute_text_command(const char *command)
 {
+    if (fs_edit_is_active()) {
+        fs_edit_handle_line(command, text_console_log);
+        return;
+    }
+    if (fs_handle_command(command, text_console_log)) {
+        return;
+    }
     execute_console_command(command, text_console_log, 0);
 }
 
@@ -853,7 +912,7 @@ void kernel_init(void)
     io_outb(0x3D4, 0x0A);
     io_outb(0x3D5, 0x20);
 
-    printk("openkernel Kernel v0.2\n");
+    printk(KERNEL_VERSION_STRING "\n");
     printk("Built: " __DATE__ " " __TIME__ "\n\n");
 
     loading_tick_inline("GDT", &load_frame);
@@ -889,6 +948,10 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
     /* Initialize memory management */
     memory_init(mbd->mem_lower, mbd->mem_upper);
     printk("  [OK]\n\n");
+
+    printk("Initializing filesystem...\n");
+    fs_init();
+    printk("  [OK] OKFS ready\n\n");
 
     /* Enable interrupts for preemptive multitasking */
     enable_interrupts();
@@ -1002,10 +1065,13 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                         }
                     }
                 } else if (pseudo_text_mode_active) {
+                    int gfx_redraw = 0; /* 0=none, 1=prompt only, 2=full screen */
                     (void)key;
                     if (sc == 0x1C) { /* Enter */
+                        int had_input = pseudo_cmd_len > 0;
                         pseudo_console_execute();
                         pseudo_cmd_cursor = 0;
+                        gfx_redraw = had_input ? 2 : 1;
                     } else if (sc == 0x0E) { /* Backspace */
                         if (pseudo_cmd_cursor > 0) {
                             for (int i = pseudo_cmd_cursor - 1; i < pseudo_cmd_len - 1; i++)
@@ -1013,6 +1079,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                             pseudo_cmd_len--;
                             pseudo_cmd_cursor--;
                             pseudo_cmd[pseudo_cmd_len] = '\0';
+                            gfx_redraw = 1;
                         }
                     } else {
                         char ch = keyboard_scancode_to_ascii(sc);
@@ -1024,9 +1091,14 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                             pseudo_cmd_len++;
                             pseudo_cmd_cursor++;
                             pseudo_cmd[pseudo_cmd_len] = '\0';
+                            gfx_redraw = 1;
                         }
                     }
-                    render_pseudo_text_screen();
+                    if (gfx_redraw == 2) {
+                        render_pseudo_text_screen();
+                    } else if (gfx_redraw == 1) {
+                        render_pseudo_text_prompt();
+                    }
                 } else {
                     /* Handle regular graphics mode input */
                     if (sc == 0x1C) { /* Enter - switch to pseudo text mode */
@@ -1043,7 +1115,6 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                             pseudo_cmd_cursor--;
                             pseudo_cmd[pseudo_cmd_len] = '\0';
                         }
-                        render_pseudo_text_screen();
                     } else {
                         char ch = keyboard_scancode_to_ascii(sc);
                         if (ch >= 32 && ch <= 126 && pseudo_cmd_len < (int)sizeof(pseudo_cmd) - 1) {
@@ -1054,7 +1125,6 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                             pseudo_cmd_len++;
                             pseudo_cmd_cursor++;
                             pseudo_cmd[pseudo_cmd_len] = '\0';
-                            render_pseudo_text_screen();
                         }
                     }
                 }
@@ -1078,7 +1148,10 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                 if (!graphics_mode_active) {
                     if (cmd_cursor > 0) { cmd_cursor--; show_text_prompt(); }
                 } else if (pseudo_text_mode_active) {
-                    if (pseudo_cmd_cursor > 0) { pseudo_cmd_cursor--; render_pseudo_text_screen(); }
+                    if (pseudo_cmd_cursor > 0) {
+                        pseudo_cmd_cursor--;
+                        render_pseudo_text_prompt();
+                    }
                 }
             }
             if (arrow_right_requested) {
@@ -1086,7 +1159,10 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                 if (!graphics_mode_active) {
                     if (cmd_cursor < cmd_len) { cmd_cursor++; show_text_prompt(); }
                 } else if (pseudo_text_mode_active) {
-                    if (pseudo_cmd_cursor < pseudo_cmd_len) { pseudo_cmd_cursor++; render_pseudo_text_screen(); }
+                    if (pseudo_cmd_cursor < pseudo_cmd_len) {
+                        pseudo_cmd_cursor++;
+                        render_pseudo_text_prompt();
+                    }
                 }
             }
             if (delete_requested) {
@@ -1105,7 +1181,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                             pseudo_cmd[i] = pseudo_cmd[i+1];
                         pseudo_cmd_len--;
                         pseudo_cmd[pseudo_cmd_len] = '\0';
-                        render_pseudo_text_screen();
+                        render_pseudo_text_prompt();
                     }
                 }
             }

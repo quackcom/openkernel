@@ -1,0 +1,88 @@
+# Assigns [Feature Request #N] to issue titles for every issue labeled "feature-request".
+# Uses a concurrency queue so numbering runs one at a time when many arrive together.
+
+name: Assign feature request number
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: feature-request-number-queue
+  cancel-in-progress: false
+
+jobs:
+  assign-feature-request-number:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'issues' && (
+        contains(github.event.issue.labels.*.name, 'feature-request') ||
+        (github.event.action == 'labeled' && github.event.label.name == 'feature-request')
+      )
+    steps:
+      - name: Assign sequential [Feature Request #N] title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.payload.issue.number;
+            const label = 'feature-request';
+            const titlePrefix = '[Feature Request #';
+            const titleRegex = /^\[Feature Request #(\d+)\]\s*/i;
+            const templatePrefix = /^\[Feature Request\]\s*/i;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber,
+            });
+
+            if (!issue.labels.some((l) => l.name === label)) {
+              core.info(`Issue does not have the ${label} label; skipping.`);
+              return;
+            }
+
+            if (titleRegex.test(issue.title)) {
+              core.info('Issue already has a feature request number in the title.');
+              return;
+            }
+
+            const labeledIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              labels: label,
+              state: 'all',
+              per_page: 100,
+            });
+
+            let maxNum = 0;
+            for (const item of labeledIssues) {
+              const match = item.title.match(titleRegex);
+              if (match) {
+                const n = parseInt(match[1], 10);
+                if (n > maxNum) maxNum = n;
+              }
+            }
+
+            const nextNum = maxNum + 1;
+            const baseTitle = issue.title.replace(templatePrefix, '').trim();
+            const newTitle = `${titlePrefix}${nextNum}] ${baseTitle}`;
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              title: newTitle,
+            });
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body:
+                `Tracked as **Feature Request #${nextNum}** (assigned sequentially via the feature-request-number queue).`,
+            });

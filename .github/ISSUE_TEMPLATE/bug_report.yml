@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a problem with openkernel
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. This template adds the `bug` label automatically.
+        A maintainer workflow will assign a sequential ID like `[BUG #N]` to the title.
+        Please search existing issues before submitting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly.
+      placeholder: The kernel panics when I run `cat` on a missing file...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps so we can reproduce the issue.
+      placeholder: |
+        1. `make run`
+        2. Type `cat missing.txt`
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Kernel / build version
+      description: Output of `os.version` or build date shown at boot.
+      placeholder: openkernel Kernel v0.2
+    validations:
+      required: false
+
+  - type: input
+    id: host_os
+    attributes:
+      label: Host OS
+      placeholder: Windows 11, Ubuntu 24.04, etc.
+    validations:
+      required: false
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: i686-elf-gcc, QEMU, NASM versions if relevant.
+      placeholder: i686-elf-gcc 13.x, qemu-system-i386 8.x
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste terminal output or link screenshots.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I have searched for duplicate issues and provided enough detail to investigate.
+          required: true

@@ -1,6 +1,13 @@
 # Documentation
 
-This directory contains comprehensive documentation for the openkernel project.
+This directory contains guides for the openkernel project.
+
+## GitHub Wiki (recommended)
+
+**Full documentation** — architecture, boot flow, every component, OKFS, commands:
+
+- **Live wiki:** https://github.com/quackcom/openkernel/wiki  
+- **Source files:** [`../wiki/`](../wiki/) — publish with [Publishing-the-Wiki](../wiki/Publishing-the-Wiki.md)
 
 ## Quick Navigation
 

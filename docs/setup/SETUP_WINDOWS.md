@@ -83,9 +83,62 @@ All should return version information without errors.
 **On Windows with Git Bash:**
 If you're using Git Bash instead of PowerShell, the same PATH additions work.
 
+## Building a bootable ISO
+
+`make iso` needs **grub-mkrescue** and **xorriso**. These are not included with the usual Windows build tools and are **not** on PATH by default — that is why you may see:
+
+```text
+ERROR: grub-mkrescue not found on PATH.
+```
+
+### Option A: Use WSL (recommended on Windows)
+
+You already have WSL; install the ISO tools once inside Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y grub-pc-bin xorriso
+```
+
+Then either:
+
+**From WSL** (project on the Windows drive):
+
+```bash
+cd /mnt/c/Users/rikym/openkernel
+make iso
+make run-iso
+```
+
+**From PowerShell** (delegates to WSL and installs packages if missing):
+
+```powershell
+cd c:\Users\rikym\openkernel
+make iso-wsl
+```
+
+### Option B: Skip the ISO
+
+For day-to-day development you do **not** need an ISO. GRUB is only required to pack a CD image:
+
+```powershell
+make run
+```
+
+This boots `build/kernel.elf` directly in QEMU (`-kernel`), which is enough to test the kernel and filesystem.
+
+### Verify ISO tools
+
+```powershell
+make check-tools-iso
+```
+
+On native Windows PATH this will usually fail until you use WSL; that is expected.
+
 ## Next Steps
 
 Once tools are installed:
 1. Navigate to the openkernel directory: `cd c:\Users\rikym\openkernel`
 2. Run `make all` to build the kernel
-3. Run `make run` to test with QEMU
+3. Run `make run` to test with QEMU (no ISO required)
+4. Optional: `make iso-wsl` or `make iso` (inside WSL) to build a bootable CD image

@@ -1,0 +1,95 @@
+# Assigns [BUG #N] to issue titles for every issue labeled "bug".
+# Uses a concurrency queue so only one numbering job runs at a time when
+# multiple bug reports are opened in parallel.
+
+name: Assign bug number
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+# Process bug numbering one issue at a time (queue, do not cancel pending runs).
+concurrency:
+  group: bug-number-queue
+  cancel-in-progress: false
+
+jobs:
+  assign-bug-number:
+    runs-on: ubuntu-latest
+    # Run when the issue already has the bug label, or when bug was just added.
+    if: |
+      github.event_name == 'issues' && (
+        contains(github.event.issue.labels.*.name, 'bug') ||
+        (github.event.action == 'labeled' && github.event.label.name == 'bug')
+      )
+    steps:
+      - name: Assign sequential [BUG #N] title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.payload.issue.number;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber,
+            });
+
+            const hasBugLabel = issue.labels.some(
+              (label) => label.name === 'bug'
+            );
+            if (!hasBugLabel) {
+              core.info('Issue does not have the bug label; skipping.');
+              return;
+            }
+
+            const bugPrefix = /^\[BUG #(\d+)\]\s*/i;
+            if (bugPrefix.test(issue.title)) {
+              core.info('Issue already has a bug number in the title.');
+              return;
+            }
+
+            // Collect all bug reports (open and closed) to determine next number.
+            const bugIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              labels: 'bug',
+              state: 'all',
+              per_page: 100,
+            });
+
+            let maxNum = 0;
+            for (const bug of bugIssues) {
+              const match = bug.title.match(/^\[BUG #(\d+)\]/i);
+              if (match) {
+                const n = parseInt(match[1], 10);
+                if (n > maxNum) maxNum = n;
+              }
+            }
+
+            const nextNum = maxNum + 1;
+            const baseTitle = issue.title.replace(/^\[Bug\]\s*/i, '').trim();
+            const newTitle = `[BUG #${nextNum}] ${baseTitle}`;
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              title: newTitle,
+            });
+
+            core.info(`Assigned ${newTitle}`);
+
+            // Optional comment for traceability (helps when many reports land at once).
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body:
+                `Tracked as **BUG #${nextNum}** (assigned sequentially via the bug-number queue).`,
+            });

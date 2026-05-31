@@ -44,9 +44,14 @@ void display_putpixel(uint32_t x, uint32_t y, uint32_t color);
 void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void display_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 
-/* Text rendering for graphics mode */
+/* Text rendering for graphics mode (8x8 font scaled 2x) */
+#define DISPLAY_CHAR_W  16
+#define DISPLAY_CHAR_H  16
+
 void display_putchar(char c, uint32_t x, uint32_t y, uint32_t color);
 void display_puts(const char *str, uint32_t x, uint32_t y, uint32_t color);
+/* Single scanline: no wrap; clips at right edge of the framebuffer */
+void display_puts_line(const char *str, uint32_t x, uint32_t y, uint32_t color);
 
 /* Create a 32-bit RGB color */
 static inline uint32_t display_rgb(uint8_t r, uint8_t g, uint8_t b)

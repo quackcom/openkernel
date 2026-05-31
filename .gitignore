@@ -26,3 +26,6 @@ Thumbs.db
 
 # Excluded directories
 /lang-documentation/
+
+# Standalone wiki clone (separate git repo)
+/openkernel.wiki/

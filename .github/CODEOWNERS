@@ -1,0 +1,4 @@
+# Auto-request review from collaborators on every PR.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+* @quackcom

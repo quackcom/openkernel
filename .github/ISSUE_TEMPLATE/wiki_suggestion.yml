@@ -1,0 +1,55 @@
+name: Wiki suggestion
+description: Suggest an improvement to the openkernel wiki or documentation
+title: "[Wiki Suggestion] "
+labels:
+  - wiki-suggestion
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our documentation. This template adds the `wiki-suggestion` label automatically.
+        A maintainer workflow will assign a sequential ID like `[Wiki Suggestion #N]` to the title.
+        Please search existing issues before submitting.
+
+        **Note:** Direct wiki edits are limited to approved collaborators. Anyone can suggest documentation changes here.
+
+  - type: input
+    id: pages
+    attributes:
+      label: Wiki page(s)
+      description: Which page(s) should be updated? Use wiki page names or URLs.
+      placeholder: Component-Memory, Getting-Started, https://github.com/quackcom/openkernel/wiki/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is missing or incorrect?
+      description: Describe the gap, typo, or unclear section.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: What should be added, removed, or rewritten?
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why this helps
+      description: How would this improve the docs for readers?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I have searched for duplicate suggestions and provided enough detail to act on.
+          required: true
