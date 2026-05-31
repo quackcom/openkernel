@@ -77,114 +77,6 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
-            // --- Code analysis for suggested merge commit ---
-            const byCodeDir = {};
-            const newCodeFiles = [];
-            const delCodeFiles = [];
-            const addedSignatures = [];
-            const sigRegex = /^(static\s+)?\w+[\s*]+(\w+)\s*\(/m;
-
-            for (const f of files) {
-              const top = f.filename.split('/')[0];
-              if (!byCodeDir[top]) byCodeDir[top] = [];
-              byCodeDir[top].push(f);
-              if (f.status === 'added') newCodeFiles.push(f.filename);
-              if (f.status === 'removed') delCodeFiles.push(f.filename);
-
-              // Scan patch for new function signatures
-              if (f.patch && (f.filename.endsWith('.c') || f.filename.endsWith('.h') || f.filename.endsWith('.asm'))) {
-                for (const line of f.patch.split('\n')) {
-                  if (line.startsWith('+') && !line.startsWith('+++')) {
-                    const cleaned = line.slice(1).trim();
-                    const m = cleaned.match(sigRegex);
-                    if (m && !['if','for','while','switch','return','else','do','case','sizeof','assert'].includes(m[2])) {
-                      addedSignatures.push(m[2]);
-                    }
-                  }
-                }
-              }
-            }
-
-            const codeDirs = Object.keys(byCodeDir);
-            const scopeStr = codeDirs.length === 1 ? codeDirs[0] : codeDirs.slice(0, 3).join(',');
-
-            // Detect change type
-            let changeType = 'feat';
-            if (codeDirs.length === 1 && (codeDirs[0] === 'docs' || codeDirs[0] === 'wiki')) {
-              changeType = 'docs';
-            } else if (codeDirs.every((d) => d === '.github' || d === 'build' || d.startsWith('.'))) {
-              changeType = 'chore';
-            } else if (delCodeFiles.length > 0 && newCodeFiles.length === 0) {
-              changeType = 'fix';
-            }
-
-            // Build description
-            let codeDesc = '';
-            if (newCodeFiles.length > 0) {
-              codeDesc += `${newCodeFiles.length} new file${newCodeFiles.length > 1 ? 's' : ''}`;
-            }
-            if (addedSignatures.length > 0) {
-              const showSigs = addedSignatures.slice(0, 4).join(', ');
-              codeDesc += (codeDesc ? ', add ' : 'add ') +
-                addedSignatures.length + ' function' + (addedSignatures.length > 1 ? 's' : '') +
-                ' (' + showSigs + (addedSignatures.length > 4 ? ', ...' : '') + ')';
-            }
-            if (delCodeFiles.length > 0) {
-              codeDesc += (codeDesc ? ', remove ' : 'remove ') + delCodeFiles.length + ' file' + (delCodeFiles.length > 1 ? 's' : '');
-            }
-            if (!codeDesc) {
-              const modCount = files.filter((f) => f.status === 'modified').length;
-              codeDesc = `update ${modCount} file${modCount > 1 ? 's' : ''}`;
-            }
-
-            const suggestedTitle = `${changeType}(${scopeStr}): ${codeDesc}`;
-
-            // Build change summary lines
-            const changeLines = [];
-            for (const d of codeDirs.sort()) {
-              const items = byCodeDir[d];
-              const dirAdds = items.reduce((s, f) => s + f.additions, 0);
-              const dirDels = items.reduce((s, f) => s + f.deletions, 0);
-              const newFiles = items.filter((f) => f.status === 'added');
-              const changed = items.filter((f) => f.status === 'modified');
-              const parts = [];
-              if (newFiles.length > 0) parts.push(`${newFiles.length} added`);
-              if (changed.length > 0) parts.push(`${changed.length} modified`);
-              const delCount = items.filter((f) => f.status === 'removed').length;
-              if (delCount > 0) parts.push(`${delCount} removed`);
-              const dirSigs = addedSignatures.filter(() => true); // use the global list
-              changeLines.push(`- **${d}**: ${items.length} file(s) (${parts.join(', ')}), +${dirAdds}/-${dirDels}`);
-            }
-
-            // Add function-level details if found
-            if (addedSignatures.length > 0) {
-              changeLines.push('');
-              changeLines.push('Functions added/modified:');
-              for (const sig of addedSignatures.slice(0, 12)) {
-                changeLines.push('  - `' + sig + '`');
-              }
-              if (addedSignatures.length > 12) {
-                changeLines.push('  - ... and ' + (addedSignatures.length - 12) + ' more');
-              }
-            }
-
-            if (newCodeFiles.length > 0) {
-              changeLines.push('');
-              changeLines.push('New files:');
-              for (const nf of newCodeFiles.slice(0, 8)) {
-                changeLines.push('  - `' + nf + '`');
-              }
-              if (newCodeFiles.length > 8) {
-                changeLines.push('  - ... and ' + (newCodeFiles.length - 8) + ' more');
-              }
-            }
-
-            const codeReview =
-              `### Code review summary\n\n` +
-              `**Suggested title:** \`${suggestedTitle}\`\n\n` +
-              `**Key changes:**\n` +
-              changeLines.join('\n') + '\n';
-
             const body =
               `## PR summary (automated)\n\n` +
               `| Metric | Value |\n|--------|-------|\n` +
@@ -194,7 +86,6 @@ jobs:
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
               `\n\n---\n` +
-              codeReview +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +
               `Automation does not replace human review for kernel changes._`;
 
