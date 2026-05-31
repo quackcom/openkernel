@@ -1,0 +1,84 @@
+# Assigns [Question #N] when label "question" is applied (see .github/issue-labels.json).
+
+name: Assign question number
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: question-number-queue
+  cancel-in-progress: false
+
+jobs:
+  assign-question-number:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'question'
+    steps:
+      - name: Assign sequential [Question #N] title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.payload.issue.number;
+            const label = 'question';
+            const titleRegex = /^\[Question #(\d+)\]\s*/i;
+            const templatePrefix = /^\[Question\]\s*/i;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber,
+            });
+
+            if (!issue.labels.some((l) => l.name === label)) {
+              core.info(`Issue does not have the ${label} label; skipping.`);
+              return;
+            }
+
+            if (titleRegex.test(issue.title)) {
+              core.info('Issue already has a question number in the title.');
+              return;
+            }
+
+            const labeledIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              labels: label,
+              state: 'all',
+              per_page: 100,
+            });
+
+            let maxNum = 0;
+            for (const item of labeledIssues) {
+              const match = item.title.match(titleRegex);
+              if (match) {
+                const n = parseInt(match[1], 10);
+                if (n > maxNum) maxNum = n;
+              }
+            }
+
+            const nextNum = maxNum + 1;
+            const baseTitle = issue.title.replace(templatePrefix, '').trim() || 'Question';
+            const newTitle = `[Question #${nextNum}] ${baseTitle}`;
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              title: newTitle,
+            });
+
+            core.info(`Assigned ${newTitle}`);
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body:
+                `Tracked as **Question #${nextNum}** (assigned sequentially via the question-number queue).`,
+            });

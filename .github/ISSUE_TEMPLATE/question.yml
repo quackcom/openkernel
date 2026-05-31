@@ -1,0 +1,39 @@
+name: Question
+description: Ask a question about openkernel (usage, build, design, or contribution)
+title: "[Question] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for questions that are not bug reports, feature requests, or wiki edits.
+        The `question` label is applied automatically; a workflow assigns `[Question #N]` to the title.
+
+        Please search [existing issues](https://github.com/quackcom/openkernel/issues) first.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What do you want to know? Be as specific as you can.
+      placeholder: How do I run the OKFS shell commands in graphics mode? Does openkernel support multiboot2?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context (optional)
+      description: What you tried, docs you read, kernel version, or environment.
+      placeholder: openkernel v0.3, make run on Windows with WSL, read Getting Started wiki...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I have searched for duplicates and stated my question clearly.
+          required: true

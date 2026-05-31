@@ -1,0 +1,76 @@
+# Assigns [Pull Request #N] to PR titles when a pull request is opened.
+
+name: Assign pull request number
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: pull-request-number-queue
+  cancel-in-progress: false
+
+jobs:
+  assign-pull-request-number:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign sequential [Pull Request #N] title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+            const titleRegex = /^\[Pull Request #(\d+)\]\s*/i;
+            const templatePrefix = /^\[Pull Request\]\s*/i;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (titleRegex.test(pr.title)) {
+              core.info('PR already has a pull request number in the title.');
+              return;
+            }
+
+            const allPrs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'all',
+              per_page: 100,
+            });
+
+            let maxNum = 0;
+            for (const item of allPrs) {
+              const match = item.title.match(titleRegex);
+              if (match) {
+                const n = parseInt(match[1], 10);
+                if (n > maxNum) maxNum = n;
+              }
+            }
+
+            const nextNum = maxNum + 1;
+            const baseTitle = pr.title.replace(templatePrefix, '').trim() || `PR #${prNumber}`;
+            const newTitle = `[Pull Request #${nextNum}] ${baseTitle}`;
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: prNumber,
+              title: newTitle,
+            });
+
+            core.info(`Assigned PR title: ${newTitle}`);
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: prNumber,
+              body:
+                `Tracked as **Pull Request #${nextNum}** (title updated by the pull-request-number queue).`,
+            });
