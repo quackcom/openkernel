@@ -9,7 +9,7 @@ Central orchestration: boot validation, subsystem init, VGA text console, built-
 ## `kernel.h` highlights
 
 - **`multiboot_info_t`** — full Multiboot v1 structure (memory, cmdline, framebuffer fields)  
-- **`KERNEL_VERSION`** / **`KERNEL_VERSION_STRING`** — e.g. `0.2`  
+- **`KERNEL_VERSION`** / **`KERNEL_VERSION_STRING`** — e.g. `0.3`  
 - Declarations: `kernel_main`, `printk`, `kmalloc`, `halt`, loading status helpers  
 
 ## `kernel_main()`

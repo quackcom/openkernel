@@ -2,6 +2,11 @@
 
 <!-- What does this PR change and why? Link issues: Fixes #123, relates to [BUG #N] -->
 
+<!-- Optional merge commit sync (see docs/guides/PR_GOVERNANCE.md):
+     Put [USE_PR_TITLE] anywhere in the PR title to use the title as the merge commit subject.
+     Put [USE_PR_DESC] anywhere in this description to use the PR body as the merge commit body.
+     Collaborators approve via GitHub: Files changed → Review changes → Approve. -->
+
 ## Type of change
 
 - [ ] Bug fix

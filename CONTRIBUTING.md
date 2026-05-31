@@ -50,6 +50,16 @@ Anyone                         Maintainers / collaborators
 
 To request collaborator access, contact a maintainer via issue or discussion.
 
+### Approving and merging pull requests
+
+**Anyone** can comment on a PR. **Approving** (for the project’s majority rule) is done on GitHub by users listed in [`.github/COLLABORATORS`](.github/COLLABORATORS):
+
+1. Open the PR → **Files changed** → **Review changes** → **Approve** → **Submit review**.
+
+When enough listed collaborators have approved, the [PR governance workflow](docs/guides/PR_GOVERNANCE.md) adds the `ready-to-merge` label. **Only collaborators** with merge permission should then click **Merge pull request**.
+
+Full steps, majority math, and `gh pr review` usage: **[PR governance guide](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request)**.
+
 ## Our values
 
 - **Open collaboration** — we grow the project together.

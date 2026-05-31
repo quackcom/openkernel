@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define KERNEL_VERSION "0.2"
+#define KERNEL_VERSION "0.3"
 #define KERNEL_VERSION_STRING "openkernel Kernel v" KERNEL_VERSION
 
 /* Multiboot structures and constants */
