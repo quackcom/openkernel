@@ -60,6 +60,8 @@ When enough listed collaborators have approved, the [PR governance workflow](doc
 
 Full steps, majority math, and `gh pr review` usage: **[PR governance guide](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request)**.
 
+**Solo maintainer:** GitHub will not let you **Approve** your own PR. See [PR governance — single collaborator](docs/guides/PR_GOVERNANCE.md#single-collaborator-solo-maintainer) for bypass / second-reviewer options.
+
 ## Our values
 
 - **Open collaboration** — we grow the project together.
@@ -81,7 +83,7 @@ Full steps, majority math, and `gh pr review` usage: **[PR governance guide](doc
 | **Feature request** | `feature-request` | `[Feature Request #N]` |
 | **Wiki suggestion** | `wiki-suggestion` | `[Wiki Suggestion #N]` |
 
-GitHub Actions assign sequential IDs (one at a time per label if many issues arrive together).
+GitHub Actions assign sequential IDs when the template label is applied (workflows listen for the `labeled` event; if an old issue was never numbered, remove and re-add the label to re-run).
 
 ### Bug reports
 

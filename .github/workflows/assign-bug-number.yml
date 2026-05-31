@@ -1,17 +1,15 @@
 # Assigns [BUG #N] to issue titles for every issue labeled "bug".
-# Uses a concurrency queue so only one numbering job runs at a time when
-# multiple bug reports are opened in parallel.
+# Triggers on `labeled` because issue-form labels are applied after `opened`.
 
 name: Assign bug number
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [labeled]
 
 permissions:
   issues: write
 
-# Process bug numbering one issue at a time (queue, do not cancel pending runs).
 concurrency:
   group: bug-number-queue
   cancel-in-progress: false
@@ -19,12 +17,7 @@ concurrency:
 jobs:
   assign-bug-number:
     runs-on: ubuntu-latest
-    # Run when the issue already has the bug label, or when bug was just added.
-    if: |
-      github.event_name == 'issues' && (
-        contains(github.event.issue.labels.*.name, 'bug') ||
-        (github.event.action == 'labeled' && github.event.label.name == 'bug')
-      )
+    if: github.event.label.name == 'bug'
     steps:
       - name: Assign sequential [BUG #N] title
         uses: actions/github-script@v7
@@ -40,9 +33,7 @@ jobs:
               issue_number: issueNumber,
             });
 
-            const hasBugLabel = issue.labels.some(
-              (label) => label.name === 'bug'
-            );
+            const hasBugLabel = issue.labels.some((label) => label.name === 'bug');
             if (!hasBugLabel) {
               core.info('Issue does not have the bug label; skipping.');
               return;
@@ -54,7 +45,6 @@ jobs:
               return;
             }
 
-            // Collect all bug reports (open and closed) to determine next number.
             const bugIssues = await github.paginate(github.rest.issues.listForRepo, {
               owner,
               repo,
@@ -73,7 +63,7 @@ jobs:
             }
 
             const nextNum = maxNum + 1;
-            const baseTitle = issue.title.replace(/^\[Bug\]\s*/i, '').trim();
+            const baseTitle = issue.title.replace(/^\[Bug\]\s*/i, '').trim() || 'Bug report';
             const newTitle = `[BUG #${nextNum}] ${baseTitle}`;
 
             await github.rest.issues.update({
@@ -85,7 +75,6 @@ jobs:
 
             core.info(`Assigned ${newTitle}`);
 
-            // Optional comment for traceability (helps when many reports land at once).
             await github.rest.issues.createComment({
               owner,
               repo,
