@@ -77,6 +77,40 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
+            // Build suggested merge commit from PR title and Summary section
+            const prTitle = pr.title || '';
+            const prBody = pr.body || '';
+
+            const cleanTitle = prTitle
+              .replace(/^\[Pull Request #\d+\]\s*/i, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+
+            const summaryMatch = prBody.match(
+              /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+            );
+            const summaryText = summaryMatch
+              ? summaryMatch[1]
+                  .split('\n')
+                  .map((l) => l.trimEnd())
+                  .filter((l) => l.trim().length > 0)
+                  .join('\n')
+                  .trim()
+              : '';
+
+            let mergeCommitSuggestion = '';
+            if (cleanTitle) {
+              mergeCommitSuggestion +=
+                `### Suggested merge commit\n\n` +
+                `When merging, paste this into the merge commit fields:\n\n` +
+                `**Title:**\n\`${cleanTitle}\`\n\n`;
+              if (summaryText) {
+                mergeCommitSuggestion +=
+                  `**Body:**\n\`\`\`\n${summaryText}\n\`\`\`\n`;
+              }
+              mergeCommitSuggestion += `\n`;
+            }
+
             const body =
               `## PR summary (automated)\n\n` +
               `| Metric | Value |\n|--------|-------|\n` +
@@ -86,6 +120,8 @@ jobs:
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
               `\n\n---\n` +
+              mergeCommitSuggestion +
+              `\n---\n` +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +
               `Automation does not replace human review for kernel changes._`;
 
