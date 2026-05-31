@@ -228,18 +228,17 @@ jobs:
               });
 
               // Use PAT to bypass ruleset (must have contents:write on the repo)
-              const { Octokit } = require("@octokit/action");
-              const octokitWithToken = process.env.FORCE_PUSH_TOKEN
-                ? new Octokit({ auth: process.env.FORCE_PUSH_TOKEN })
-                : github;
-              const updateRefClient = octokitWithToken.rest.git.updateRef;
-
-              await updateRefClient({
+              const headers = {};
+              if (process.env.FORCE_PUSH_TOKEN) {
+                headers.authorization = `Bearer ${process.env.FORCE_PUSH_TOKEN}`;
+              }
+              await github.request('PATCH /repos/{owner}/{repo}/git/refs/heads/{ref}', {
                 owner,
                 repo,
-                ref: `heads/${baseRef}`,
+                ref: baseRef,
                 sha: newCommit.sha,
                 force: true,
+                headers,
               });
 
               await postStatus(
