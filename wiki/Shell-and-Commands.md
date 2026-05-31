@@ -28,7 +28,7 @@ openkernel includes a **built-in shell** in `kernel.c` — not a separate user-s
 
 | Command | Description |
 |---------|-------------|
-| `os.version` | Prints `openkernel Kernel v0.2` (from `KERNEL_VERSION`) |
+| `os.version` | Prints `openkernel Kernel v0.3` (from `KERNEL_VERSION`) |
 | `os.bootinfo` | Multiboot magic, flags, RAM, loader name |
 
 ## Filesystem commands (`help --fs`)

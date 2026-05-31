@@ -1,12 +1,13 @@
 # PR summary on open/update + collaborator majority approval tracking.
-# Does NOT auto-merge. Adds label `ready-to-merge` when majority of
-# .github/COLLABORATORS have approved.
+# Adds label `ready-to-merge` when majority of .github/COLLABORATORS approve.
+# On merge: rewrites the merge/squash commit message when [USE_PR_TITLE] /
+# [USE_PR_DESC] appear in the PR title / description.
 
 name: PR governance
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
   pull_request_review:
     types: [submitted]
 
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   pr-summary:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,19 +57,29 @@ jobs:
 
             const fs = require('fs');
             let collabNote = '';
+            let collaborators = [];
             try {
               const raw = fs.readFileSync('.github/COLLABORATORS', 'utf8');
-              const collabs = raw.split('\n')
-                .map((l) => l.trim())
+              collaborators = raw.split('\n')
+                .map((l) => l.trim().toLowerCase())
                 .filter((l) => l && !l.startsWith('#'));
-              const needed = Math.floor(collabs.length / 2) + 1;
+              const needed = Math.floor(collaborators.length / 2) + 1;
               collabNote = `\n\n### Merge policy\n` +
-                `Collaborator majority required: **${needed}** of **${collabs.length}** approvals ` +
-                `from: ${collabs.map((c) => '`' + c + '`').join(', ')}.\n` +
-                `When reached, this workflow adds the \`ready-to-merge\` label (merge is still manual).`;
+                `Collaborator majority required: **${needed}** of **${collaborators.length}** approvals ` +
+                `from: ${collaborators.map((c) => '`' + c + '`').join(', ')}.\n` +
+                `When majority is met, this workflow adds the \`ready-to-merge\` label (merge is still manual).\n` +
+                `See the **Collaborator approval status** comment below for how to approve.`;
             } catch (e) {
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
+
+            const mergeMsgNote =
+              `\n\n### Merge commit message (optional)\n` +
+              `| Flag | Where | Effect on merge commit |\n|------|--------|-------------------------|\n` +
+              `| \`[USE_PR_TITLE]\` | PR **title** | Use PR title as commit subject (marker removed) |\n` +
+              `| \`[USE_PR_DESC]\` | PR **description** | Use PR body as commit body (marker removed) |\n` +
+              `After merge, if the merge commit is still the branch tip, the workflow rewrites its message. ` +
+              `Allow this workflow to bypass branch protection if rewrites are blocked.`;
 
             const body =
               `## PR summary (automated)\n\n` +
@@ -78,16 +89,17 @@ jobs:
               `| Author | @${pr.user.login} |\n\n` +
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
+              mergeMsgNote +
               `\n\n---\n` +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +
               `Automation does not replace human review for kernel changes._`;
 
+            const marker = '<!-- pr-governance-summary -->';
             const { data: comments } = await github.rest.issues.listComments({
               owner,
               repo,
               issue_number: pr.number,
             });
-            const marker = '<!-- pr-governance-summary -->';
             const existing = comments.find((c) =>
               c.user.type === 'Bot' && c.body && c.body.includes(marker)
             );
@@ -109,7 +121,9 @@ jobs:
             }
 
   majority-approval:
-    if: github.event_name == 'pull_request_review'
+    if: |
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +156,6 @@ jobs:
               per_page: 100,
             });
 
-            // Latest review per user wins
             const latest = new Map();
             for (const r of reviews) {
               if (r.user && r.user.login) {
@@ -157,8 +170,21 @@ jobs:
 
             const majorityMet = approved.length >= required;
 
+            const howToApprove =
+              `### How to approve\n\n` +
+              `Only GitHub users listed in [\`.github/COLLABORATORS\`](https://github.com/${owner}/${repo}/blob/main/.github/COLLABORATORS) count toward majority.\n\n` +
+              `1. Open the PR on GitHub.\n` +
+              `2. Go to **Files changed** (or use the review bar on **Conversation**).\n` +
+              `3. Click **Review changes** (green button, top right).\n` +
+              `4. Select **Approve** (not *Comment* only — comments do not count).\n` +
+              `5. Click **Submit review**.\n\n` +
+              `Alternatively: sidebar **Reviewers** → your avatar → **Approve**.\n\n` +
+              `When enough listed collaborators have approved, this bot adds \`ready-to-merge\`. ` +
+              `A collaborator then clicks **Merge pull request** (squash or merge per repo preference).\n\n`;
+
             let body =
               `## Collaborator approval status\n\n` +
+              howToApprove +
               `| | Count |\n|--|------|\n` +
               `| Required (majority) | **${required}** of ${collaborators.length} |\n` +
               `| Approved | **${approved.length}** |\n\n`;
@@ -173,7 +199,7 @@ jobs:
             }
 
             if (majorityMet) {
-              body += '✅ **Collaborator majority reached.** Label `ready-to-merge` applied. A collaborator may merge when CI and review quality are satisfactory.\n';
+              body += '✅ **Ready to merge.** Label `ready-to-merge` applied. A collaborator may merge when CI and review quality are satisfactory.\n';
             } else {
               body += `⏳ **Waiting for collaborator majority** (${approved.length}/${required}).\n`;
             }
@@ -223,3 +249,102 @@ jobs:
                 core.info('ready-to-merge label not present');
               }
             }
+
+  sync-merge-commit:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Sync merge commit from PR title/description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr.merged) {
+              core.info('PR was closed without merge; skipping commit message sync.');
+              return;
+            }
+
+            const title = pr.title || '';
+            const body = pr.body || '';
+            const useTitle = title.includes('[USE_PR_TITLE]');
+            const useDesc = body.includes('[USE_PR_DESC]');
+
+            if (!useTitle && !useDesc) {
+              core.info('No [USE_PR_TITLE] or [USE_PR_DESC] flags; skipping.');
+              return;
+            }
+
+            const cleanTitle = useTitle
+              ? title.replace(/\[USE_PR_TITLE\]/g, '').replace(/\s+/g, ' ').trim()
+              : null;
+            const cleanDesc = useDesc
+              ? body.replace(/\[USE_PR_DESC\]/g, '').trim()
+              : null;
+
+            const mergeSha = pr.merge_commit_sha;
+            if (!mergeSha) {
+              core.warning('No merge_commit_sha on PR; cannot sync commit message.');
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const baseRef = pr.base.ref;
+
+            const { data: ref } = await github.rest.git.getRef({
+              owner,
+              repo,
+              ref: `heads/${baseRef}`,
+            });
+
+            if (ref.object.sha !== mergeSha) {
+              core.warning(
+                `Merge commit ${mergeSha} is not the tip of ${baseRef} (${ref.object.sha}); ` +
+                'skipping message sync to avoid rewriting unrelated history.'
+              );
+              return;
+            }
+
+            const { data: commit } = await github.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: mergeSha,
+            });
+
+            const lines = commit.message.split('\n');
+            const curTitle = lines[0] || '';
+            const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
+
+            const newTitle = cleanTitle !== null ? cleanTitle : curTitle;
+            const newBody = cleanDesc !== null ? cleanDesc : curBody;
+            const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
+
+            if (newMessage === commit.message) {
+              core.info('Commit message already matches; nothing to do.');
+              return;
+            }
+
+            const { data: newCommit } = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: newMessage,
+              tree: commit.tree.sha,
+              parents: commit.parents.map((p) => p.sha),
+            });
+
+            await github.rest.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${baseRef}`,
+              sha: newCommit.sha,
+              force: true,
+            });
+
+            core.summary
+              .addHeading('Merge commit message synced')
+              .addRaw(`Updated \`${mergeSha.slice(0, 7)}\` on \`${baseRef}\`:\n\n`)
+              .addCodeBlock(newMessage)
+              .write();

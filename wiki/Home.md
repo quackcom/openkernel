@@ -56,4 +56,4 @@ Detailed pages for each major part of the kernel:
 
 ## Version
 
-Current kernel version string: **v0.2** (see `KERNEL_VERSION` in `kernel.h`, command `os.version`).
+Current kernel version string: **v0.3** (see `KERNEL_VERSION` in `kernel.h`, command `os.version`).

@@ -45,7 +45,7 @@ make help
 When running successfully, QEMU should display:
 
 ```
-openkernel Kernel v0.2
+openkernel Kernel v0.3
 Built: <build date> <build time>
 
 [Loading 1/5] [#####] GDT

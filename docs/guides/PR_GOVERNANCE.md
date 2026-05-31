@@ -31,9 +31,45 @@ This document describes a practical automation strategy for openkernel: what to 
 Workflow **PR governance** (`.github/workflows/pr-governance.yml`):
 
 - **On open/update:** posts a structured summary (files changed, +/− lines).
-- **On collaborator approval:** counts approvals from `.github/COLLABORATORS`; when **strict majority** is reached, adds label `ready-to-merge` and comments.
+- **On open/update and on each review:** posts **Collaborator approval status** (vote count + how to approve).
+- **On collaborator approval:** counts **Approved** reviews from `.github/COLLABORATORS`; when **strict majority** is reached, adds label `ready-to-merge`.
+- **On merge:** if the PR title contains `[USE_PR_TITLE]` and/or the description contains `[USE_PR_DESC]`, the workflow rewrites the merge/squash commit message on the base branch (markers are stripped). Only runs when that merge commit is still the branch tip.
 
-Majority rule: **more than half** of listed collaborators must submit an **Approved** review.
+Majority rule: **more than half** of listed collaborators must submit an **Approved** review. This applies to **all** PRs, including those opened by collaborators.
+
+## How to approve a pull request
+
+Approvals are done **on GitHub**, not in git or the terminal. Only users in [`.github/COLLABORATORS`](../../.github/COLLABORATORS) count toward the bot’s majority tally (branch protection may still require a separate GitHub approval).
+
+### Steps (web UI)
+
+1. Open the pull request.
+2. Open the **Files changed** tab (or use the review controls on **Conversation**).
+3. Click **Review changes** (top right).
+4. Choose **Approve** — **not** “Comment” only (a comment alone does **not** count).
+5. Click **Submit review**.
+
+**Shortcut:** on the right sidebar, under **Reviewers**, click your name → **Approve**.
+
+### What happens next
+
+| Step | Who | What |
+|------|-----|------|
+| 1 | Listed collaborators | Submit **Approve** reviews until majority is met |
+| 2 | Bot | Adds label `ready-to-merge` and updates the approval comment |
+| 3 | Collaborator with merge rights | Clicks **Merge pull request** on GitHub |
+
+### Single collaborator (solo maintainer)
+
+If only **one** username is in `COLLABORATORS`, majority is **1** approval — that user approves the PR (often their own). In **Settings → Rules → Rulesets**, you may need to allow administrators/collaborators to approve their own PRs if GitHub blocks self-approval.
+
+### Approving from the command line (optional)
+
+```bash
+gh pr review 42 --approve
+```
+
+Replace `42` with the PR number. Your GitHub user must be listed in `COLLABORATORS`.
 
 Example: 3 collaborators → need **2** approvals. 5 collaborators → need **3**.
 
@@ -83,6 +119,17 @@ Recommended: keep **branch protection** (at least 1 approval) **and** use the wo
 - Rollback process exists
 
 For openkernel, prefer: **bot comments + label → human collaborator clicks Merge**.
+
+### Merge commit title and description
+
+| Flag | Location | Result |
+|------|----------|--------|
+| `[USE_PR_TITLE]` | PR title | Merge commit **subject** = PR title without the marker |
+| `[USE_PR_DESC]` | PR description | Merge commit **body** = PR description without the marker |
+
+You can use one or both. Example title: `[USE_PR_TITLE] feat: OKFS filesystem (v0.3)`.
+
+After you click **Merge**, the **sync-merge-commit** job runs. It replaces the tip commit on the base branch (`main`) only if the merge commit is still HEAD (no newer pushes). The workflow needs permission to update `main`; add **GitHub Actions** to the ruleset bypass list if force-updating the tip commit is blocked.
 
 ## Assigning PRs to people
 
@@ -162,6 +209,8 @@ Enable the same ideas: require PR, 1 approval, dismiss stale reviews, require co
 - [ ] Enable branch protection on `main`
 - [ ] Add repo secret `OPENAI_API_KEY` only if you add an AI review workflow later
 - [ ] Run a test PR from a fork and confirm summary + vote comments
+- [ ] Ruleset bypass: allow **GitHub Actions** to push when using `[USE_PR_TITLE]` / `[USE_PR_DESC]` merge sync
+- [ ] Test approval: submit **Approve** review as a user in `COLLABORATORS`; confirm `ready-to-merge` label
 
 ## Related
 
