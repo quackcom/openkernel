@@ -81,11 +81,11 @@ jobs:
 
             const mergeMsgNote =
               `\n\n### Merge commit message (optional)\n` +
-              `| Flag | Where | Effect on merge commit |\n|------|--------|-------------------------|\n` +
-              `| \`[USE_PR_TITLE]\` | PR **title** | Use PR title as commit subject (marker removed) |\n` +
-              `| \`[USE_PR_DESC]\` | PR **description** | Use PR body as commit body (marker removed) |\n` +
-              `After merge, if the merge commit is still the branch tip, the workflow rewrites its message. ` +
-              `Allow this workflow to bypass branch protection if rewrites are blocked.`;
+              `| Flag | Where | Effect |\n|------|--------|--------|\n` +
+              `| \`[USE_PR_TITLE]\` | PR **title** (not inside HTML comments) | Commit **subject** = title without markers or \`[Pull Request #N]\` |\n` +
+              `| \`[USE_PR_DESC]\` | **Summary** section only (not inside \`<!-- -->\`) | Commit **body** = Summary text only |\n` +
+              `After merge, the workflow rewrites the tip commit if it is still \`main\` HEAD. ` +
+              `Add **GitHub Actions** to ruleset bypass if the push is blocked.`;
 
             const body =
               `## PR summary (automated)\n\n` +
@@ -318,28 +318,81 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const pr = context.payload.pull_request;
-            if (!pr.merged) {
+            const payloadPr = context.payload.pull_request;
+            if (!payloadPr.merged) {
               core.info('PR was closed without merge; skipping commit message sync.');
               return;
             }
 
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: payloadPr.number,
+            });
+
+            const stripHtmlComments = (text) =>
+              (text || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            const extractSummary = (body) => {
+              const visible = stripHtmlComments(body);
+              const match = visible.match(
+                /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+              );
+              if (!match) return '';
+              return match[1]
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .split('\n')
+                .map((line) => line.trimEnd())
+                .filter((line) => line.trim().length > 0)
+                .join('\n')
+                .trim();
+            };
+
+            const cleanPrTitle = (raw) =>
+              (raw || '')
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .replace(/^\[Pull Request #\d+\]\s*/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
             const title = pr.title || '';
             const body = pr.body || '';
-            const useTitle = title.includes('[USE_PR_TITLE]');
-            const useDesc = body.includes('[USE_PR_DESC]');
+            const summaryVisible = stripHtmlComments(
+              (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+            );
+
+            const useTitle =
+              /\[USE_PR_TITLE\]/i.test(title) ||
+              /\[USE_PR_TITLE\]/i.test(summaryVisible);
+            const useDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
 
             if (!useTitle && !useDesc) {
-              core.info('No [USE_PR_TITLE] or [USE_PR_DESC] flags; skipping.');
+              core.info(
+                'No [USE_PR_TITLE] or [USE_PR_DESC] outside HTML comments; skipping.'
+              );
               return;
             }
 
-            const cleanTitle = useTitle
-              ? title.replace(/\[USE_PR_TITLE\]/g, '').replace(/\s+/g, ' ').trim()
-              : null;
-            const cleanDesc = useDesc
-              ? body.replace(/\[USE_PR_DESC\]/g, '').trim()
-              : null;
+            const cleanTitle = useTitle ? cleanPrTitle(title) : null;
+            let cleanDesc = null;
+            if (useDesc) {
+              cleanDesc = extractSummary(body);
+              if (!cleanDesc) {
+                core.warning(
+                  '[USE_PR_DESC] is set but the Summary section is empty after removing markers.'
+                );
+              }
+            }
+
+            if (useTitle && !cleanTitle) {
+              core.setFailed('[USE_PR_TITLE] would produce an empty commit subject.');
+              return;
+            }
 
             const mergeSha = pr.merge_commit_sha;
             if (!mergeSha) {
@@ -347,8 +400,6 @@ jobs:
               return;
             }
 
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
             const baseRef = pr.base.ref;
 
             const { data: ref } = await github.rest.git.getRef({
@@ -376,7 +427,12 @@ jobs:
             const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
 
             const newTitle = cleanTitle !== null ? cleanTitle : curTitle;
-            const newBody = cleanDesc !== null ? cleanDesc : curBody;
+            let newBody = curBody;
+            if (useDesc && cleanDesc) {
+              newBody = cleanDesc;
+            } else if (useDesc && !cleanDesc) {
+              newBody = curBody;
+            }
             const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
 
             if (newMessage === commit.message) {
