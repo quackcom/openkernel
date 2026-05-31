@@ -145,14 +145,34 @@ For openkernel, prefer: **bot comments + label → human collaborator clicks Mer
 
 ### Merge commit title and description
 
-| Flag | Location | Result |
-|------|----------|--------|
-| `[USE_PR_TITLE]` | PR title | Merge commit **subject** = PR title without the marker |
-| `[USE_PR_DESC]` | PR description | Merge commit **body** = PR description without the marker |
+After merge, **sync-merge-commit** rewrites the merge/squash commit on `main` when flags are set (only if that commit is still branch HEAD).
 
-You can use one or both. Example title: `[USE_PR_TITLE] feat: OKFS filesystem (v0.3)`.
+| Flag | Where to put it | Merge commit gets |
+|------|-----------------|-------------------|
+| `[USE_PR_TITLE]` | PR **title**, or a visible line under **Summary** | **Subject** = title with markers and `[Pull Request #N]` removed |
+| `[USE_PR_DESC]` | **Summary** section only (visible text, not inside `<!-- comments -->`) | **Body** = **Summary section only** (not Testing, Checklist, etc.) |
 
-After you click **Merge**, the **sync-merge-commit** job runs. It replaces the tip commit on the base branch (`main`) only if the merge commit is still HEAD (no newer pushes). The workflow needs permission to update `main`; add **GitHub Actions** to the ruleset bypass list if force-updating the tip commit is blocked.
+**Important:**
+
+- Do **not** put the flags inside HTML comments — the default template used to mention them in comments, which made every PR look “flagged” without working.
+- `[USE_PR_DESC]` copies from `## Summary` until the next `##` heading.
+- Re-fetch uses the latest PR title/body at merge time.
+
+Example title: `[USE_PR_TITLE] [Pull Request #12] feat: OKFS (v0.3)` → subject `feat: OKFS (v0.3)`.
+
+Example Summary:
+
+```markdown
+## Summary
+
+[USE_PR_DESC]
+
+Add OKFS and shell commands. Fixes #42.
+```
+
+→ commit body is those two lines (markers stripped), not the checklist below.
+
+Add **GitHub Actions** to the ruleset **bypass list** if rewriting the commit on `main` fails with “protected ref”.
 
 ## Assigning PRs to people
 
