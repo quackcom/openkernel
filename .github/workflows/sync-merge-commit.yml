@@ -18,6 +18,9 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+  FORCE_PUSH_TOKEN: ${{ secrets.FORCE_PUSH_TOKEN }}
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -224,7 +227,14 @@ jobs:
                 parents: commit.parents.map((p) => p.sha),
               });
 
-              await github.rest.git.updateRef({
+              // Use PAT to bypass ruleset (must have contents:write on the repo)
+              const { Octokit } = require("@octokit/action");
+              const octokitWithToken = process.env.FORCE_PUSH_TOKEN
+                ? new Octokit({ auth: process.env.FORCE_PUSH_TOKEN })
+                : github;
+              const updateRefClient = octokitWithToken.rest.git.updateRef;
+
+              await updateRefClient({
                 owner,
                 repo,
                 ref: `heads/${baseRef}`,
