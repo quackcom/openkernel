@@ -69,16 +69,12 @@ jobs:
               collaborators = raw.split('\n')
                 .map((l) => l.trim().toLowerCase())
                 .filter((l) => l && !l.startsWith('#'));
-              let needed;
-              if (collaborators.length === 2) {
-                needed = '1 (from the other collaborator — authors cannot self-approve)';
-              } else {
-                needed = String(Math.floor(collaborators.length / 2) + 1);
-              }
+              const needed = Math.floor(collaborators.length / 2) + 1;
               collabNote = `\n\n### Merge policy\n` +
-                `Approvals required from: ${collaborators.map((c) => '`' + c + '`').join(', ')}.\n` +
-                `Threshold: **${needed}** → then \`ready-to-merge\` is applied automatically.\n` +
-                `See the **Collaborator approval status** comment for how to approve.`;
+                `Collaborators: ${collaborators.map((c) => '`' + c + '`').join(', ')}.\n` +
+                `Need **${needed}** of ${collaborators.length} (PR author on the list counts as approved). ` +
+                `Then \`ready-to-merge\` is applied automatically.\n` +
+                `See the **Collaborator approval status** comment for details.`;
             } catch (e) {
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
@@ -183,28 +179,24 @@ jobs:
               }
             }
 
-            const approved = [];
-            for (const login of collaborators) {
-              if (latest.get(login) === 'APPROVED') approved.push(login);
-            }
+            const required = Math.floor(collaborators.length / 2) + 1;
 
-            // 2 collaborators: 1 non-author approval (authors cannot self-approve on GitHub).
-            // 3+: strict majority. 1 listed user: same rule (usually needs admin bypass to merge).
-            let required;
-            let majorityMet;
-            let ruleNote;
-            if (collaborators.length === 2) {
-              required = 1;
-              const approvedOthers = approved.filter((login) => login !== author);
-              majorityMet = approvedOthers.length >= 1;
-              ruleNote =
-                'With **2** collaborators, **one approval from the other reviewer** is enough ' +
-                '(the PR author cannot approve their own PR on GitHub).\n\n';
-            } else {
-              required = Math.floor(collaborators.length / 2) + 1;
-              majorityMet = approved.length >= required;
-              ruleNote = '';
+            // Listed PR author counts as approved (GitHub does not allow self-Approve on own PRs).
+            const approvedSet = new Set();
+            const authorIsCollaborator = collaborators.includes(author);
+            if (authorIsCollaborator) {
+              approvedSet.add(author);
             }
+            for (const login of collaborators) {
+              if (latest.get(login) === 'APPROVED') approvedSet.add(login);
+            }
+            const approved = [...approvedSet];
+            const majorityMet = approved.length >= required;
+
+            const ruleNote =
+              authorIsCollaborator
+                ? `The PR author @${pr.user.login} is in \`.github/COLLABORATORS\` and **counts as approved** automatically.\n\n`
+                : '';
 
             async function ensureLabel(name) {
               try {
@@ -223,7 +215,8 @@ jobs:
 
             const howToApprove =
               `### How to approve\n\n` +
-              `Only GitHub users listed in [\`.github/COLLABORATORS\`](https://github.com/${owner}/${repo}/blob/main/.github/COLLABORATORS) count toward majority.\n\n` +
+              `Only users in [\`.github/COLLABORATORS\`](https://github.com/${owner}/${repo}/blob/main/.github/COLLABORATORS) count. ` +
+              `The **PR author** counts as approved if they are on that list (no self-Approve button on GitHub).\n\n` +
               `1. Open the PR on GitHub.\n` +
               `2. Go to **Files changed** (or use the review bar on **Conversation**).\n` +
               `3. Click **Review changes** (green button, top right).\n` +
@@ -242,7 +235,13 @@ jobs:
               `| Approved (listed collaborators) | **${approved.length}** of ${collaborators.length} |\n\n`;
 
             if (approved.length > 0) {
-              body += `Approved: ${approved.map((a) => '`' + a + '`').join(', ')}\n\n`;
+              const approvedLabels = approved.map((login) => {
+                if (login === author && authorIsCollaborator) {
+                  return `\`${login}\` (author, counted automatically)`;
+                }
+                return `\`${login}\``;
+              });
+              body += `Counted as approved: ${approvedLabels.join(', ')}\n\n`;
             }
 
             const pending = collaborators.filter((c) => !approved.includes(c));

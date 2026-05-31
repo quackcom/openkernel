@@ -35,15 +35,19 @@ Workflow **PR governance** (`.github/workflows/pr-governance.yml`):
 - **On collaborator approval:** counts **Approved** reviews from `.github/COLLABORATORS`; when **strict majority** is reached, adds label `ready-to-merge`.
 - **On merge:** if the PR title contains `[USE_PR_TITLE]` and/or the description contains `[USE_PR_DESC]`, the workflow rewrites the merge/squash commit message on the base branch (markers are stripped). Only runs when that merge commit is still the branch tip.
 
-Majority rule:
+Majority rule: more than half of listed collaborators must count as approved.
 
-| Collaborators listed | Approvals needed for `ready-to-merge` |
-|----------------------|----------------------------------------|
-| **2** | **1** approval from the **other** person (not the PR author — GitHub blocks self-approval) |
-| **3+** | Strict majority: more than half must **Approve** |
-| **1** | 1 approval (usually blocked if you are the author; use ruleset bypass or add a second collaborator) |
+| Who counts | How |
+|------------|-----|
+| **PR author** | Counts as approved **automatically** if their GitHub user is in `.github/COLLABORATORS` (GitHub does not offer self-Approve on your own PR) |
+| **Other collaborators** | Must submit **Approve** on GitHub |
 
-The label is applied when someone submits an **Approve** review (workflow runs on each review and on PR open/update). It is **not** added on open without a review.
+Examples with `quackcom` + `RX4-WQ` (need **2**):
+
+- @quackcom opens PR → quackcom counted + **@RX4-WQ must Approve** → `ready-to-merge`
+- External contributor opens PR → **both** collaborators must **Approve**
+
+The workflow runs on PR open/update and on each review, and applies `ready-to-merge` when the threshold is met.
 
 ## How to approve a pull request
 

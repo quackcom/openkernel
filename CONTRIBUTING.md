@@ -60,7 +60,7 @@ When enough listed collaborators have approved, the [PR governance workflow](doc
 
 Full steps, majority math, and `gh pr review` usage: **[PR governance guide](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request)**.
 
-**Solo maintainer:** GitHub will not let you **Approve** your own PR. See [PR governance — single collaborator](docs/guides/PR_GOVERNANCE.md#single-collaborator-solo-maintainer) for bypass / second-reviewer options.
+**PR author:** If you are listed in `.github/COLLABORATORS`, you count as approved automatically; other listed collaborators still **Approve** on GitHub as needed for majority. See [PR governance](docs/guides/PR_GOVERNANCE.md#how-to-approve-a-pull-request).
 
 ## Our values
 
