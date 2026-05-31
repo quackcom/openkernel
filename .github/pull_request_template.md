@@ -2,12 +2,7 @@
 
 <!-- What does this PR change and why? Link issues: Fixes #123, relates to [BUG #N] -->
 
-Write your summary here. Checkboxes and sections below are not copied to the merge commit.
-
-**Merge commit (optional):** see [PR governance](docs/guides/PR_GOVERNANCE.md).
-
-- Put `[USE_PR_TITLE]` in the **PR title** to use it as the merge commit subject (`[Pull Request #N]` is stripped).
-- Put `[USE_PR_DESC]` on a line **in this Summary section** (not in HTML comments) to use **only Summary** as the merge commit body.
+Write your summary here.
 
 ## Type of change
 

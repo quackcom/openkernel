@@ -33,8 +33,6 @@ Workflow **PR governance** (`.github/workflows/pr-governance.yml`):
 - **On open/update:** posts a structured summary (files changed, +/− lines).
 - **On open/update and on each review:** posts **Collaborator approval status** (vote count + how to approve).
 - **On collaborator approval:** counts **Approved** reviews from `.github/COLLABORATORS`; when **strict majority** is reached, adds label `ready-to-merge`.
-- **On merge:** if the PR title contains `[USE_PR_TITLE]` and/or the description contains `[USE_PR_DESC]`, the workflow rewrites the merge/squash commit message on the base branch (markers are stripped). Only runs when that merge commit is still the branch tip.
-
 Majority rule: more than half of listed collaborators must count as approved.
 
 | Who counts | How |
@@ -143,46 +141,7 @@ Recommended: keep **branch protection** (at least 1 approval) **and** use the wo
 
 For openkernel, prefer: **bot comments + label → human collaborator clicks Merge**.
 
-### Merge commit title and description
 
-After merge, workflow **[Sync merge commit](https://github.com/quackcom/openkernel/blob/main/.github/workflows/sync-merge-commit.yml)** rewrites the merge/squash commit on `main` when flags are set. **This workflow must be on `main`** (merge the governance PR first). It posts a comment on the PR explaining success or skip.
-
-| Flag | Where to put it | Merge commit gets |
-|------|-----------------|-------------------|
-| `[USE_PR_TITLE]` | PR **title**, or a visible line under **Summary** | **Subject** = title with markers and `[Pull Request #N]` removed |
-| `[USE_PR_DESC]` | **Summary** section only (visible text, not inside `<!-- comments -->`) | **Body** = **Summary section only** (not Testing, Checklist, etc.) |
-
-**Important:**
-
-- Do **not** put the flags inside HTML comments — the default template used to mention them in comments, which made every PR look “flagged” without working.
-- `[USE_PR_DESC]` copies from `## Summary` until the next `##` heading.
-- Re-fetch uses the latest PR title/body at merge time.
-
-Example title: `[USE_PR_TITLE] [Pull Request #12] feat: OKFS (v0.3)` → subject `feat: OKFS (v0.3)`.
-
-Example Summary:
-
-```markdown
-## Summary
-
-[USE_PR_DESC]
-
-Add OKFS and shell commands. Fixes #42.
-```
-
-→ commit body is those two lines (markers stripped), not the checklist below.
-
-Add **GitHub Actions** to the ruleset **bypass list** if rewriting the commit on `main` fails with “protected ref”.
-
-### Troubleshooting: custom message does not appear on `main`
-
-| Check | Action |
-|-------|--------|
-| Workflow on `main`? | **Actions** tab must list **Sync merge commit**. If missing, merge the PR that adds `.github/workflows/sync-merge-commit.yml`. |
-| Flags on the PR? | `[USE_PR_TITLE]` in title or visible Summary; `[USE_PR_DESC]` only in **Summary** (not in `<!-- comments -->`). |
-| PR comment | After merge, read the bot comment **Merge commit sync** on the PR. |
-| Protected `main` | Ruleset bypass → **GitHub Actions**. |
-| Manual retry | **Actions → Sync merge commit → Run workflow** → enter merged PR number. |
 
 ## Assigning PRs to people
 
@@ -271,7 +230,7 @@ GitHub shows this when merging would **update `main`** but the ruleset (or branc
 | **Unresolved conversations** | “Conversation must be resolved” | On the PR **Conversation** tab, resolve threads (including bot comments if GitHub treats them as blocking) |
 | **Failed / missing CI** | Required check stuck | Ruleset: turn off required status checks until a `build` workflow exists, or fix CI |
 | **Not allowed to bypass** | You are not admin / not on bypass list | Repo **Settings → Collaborators**: confirm you are **Admin**; ruleset **Bypass list** → add **Repository admins** |
-| **After merge: Actions sync** | Merge succeeded but workflow failed updating `main` | Ruleset bypass: add **GitHub Actions** (only needed if you use `[USE_PR_TITLE]` / `[USE_PR_DESC]`) |
+
 
 **Quick fix (most solo repos):**  
 **Settings → Rules → Rulesets** → edit `Protect main` → **Bypass list** → add **Repository admins** → save.  
@@ -293,7 +252,6 @@ Enable the same ideas: require PR, 1 approval, dismiss stale reviews, require co
 - [ ] Enable branch protection on `main`
 - [ ] Add repo secret `OPENAI_API_KEY` only if you add an AI review workflow later
 - [ ] Run a test PR from a fork and confirm summary + vote comments
-- [ ] Ruleset bypass: allow **GitHub Actions** to push when using `[USE_PR_TITLE]` / `[USE_PR_DESC]` merge sync
 - [ ] Test approval: submit **Approve** review as a user in `COLLABORATORS`; confirm `ready-to-merge` label
 
 ## Related

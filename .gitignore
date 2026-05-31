@@ -29,3 +29,6 @@ Thumbs.db
 
 # Standalone wiki clone (separate git repo)
 /openkernel.wiki/
+
+# Agent context file (gitignored, for AI assistants only)
+/AGENT.md

@@ -1,12 +1,11 @@
 # PR summary on open/update + collaborator majority approval tracking.
 # Adds label `ready-to-merge` when majority of .github/COLLABORATORS approve.
-# Merge commit sync: see sync-merge-commit.yml
 
 name: PR governance
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
   workflow_dispatch:
@@ -17,7 +16,7 @@ on:
         type: number
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
@@ -30,6 +29,8 @@ jobs:
 
       - name: Post PR summary
         uses: actions/github-script@v7
+        env:
+          NVIDIA_NIM_KEY: ${{ secrets.NVIDIA_NIM_KEY }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -78,13 +79,80 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
-            const mergeMsgNote =
-              `\n\n### Merge commit message (optional)\n` +
-              `| Flag | Where | Effect |\n|------|--------|--------|\n` +
-              `| \`[USE_PR_TITLE]\` | PR **title** (not inside HTML comments) | Commit **subject** = title without markers or \`[Pull Request #N]\` |\n` +
-              `| \`[USE_PR_DESC]\` | **Summary** section only (not inside \`<!-- -->\`) | Commit **body** = Summary text only |\n` +
-              `When majority approval is met and \`ready-to-merge\` is applied, the workflow merges ` +
-              `the PR automatically with the cleaned commit message. No force-push needed.`;
+            // AI-generated merge commit suggestion via NVIDIA NIM
+            let aiSuggestion = '';
+            const nimKey = process.env.NVIDIA_NIM_KEY;
+            if (nimKey) {
+              try {
+                const baseRef = pr.base.ref;
+                const headSha = pr.head.sha;
+                const { data: compare } = await github.rest.repos.compareCommits({
+                  owner,
+                  repo,
+                  base: baseRef,
+                  head: headSha,
+                });
+
+                const diffText = (compare.files || [])
+                  .map((f) => `--- ${f.filename}\n+++ ${f.filename}\n` + (f.patch || ''))
+                  .join('\n')
+                  .slice(0, 12000);
+
+                if (diffText) {
+                  const response = await fetch(
+                    'https://integrate.api.nvidia.com/v1/chat/completions',
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${nimKey}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                        messages: [
+                          {
+                            role: 'system',
+                            content: 'You are a merge commit message generator. ' +
+                              'Given a git diff, write a concise merge commit title (one line, no backticks) ' +
+                              'and a description (bullet points of key changes). ' +
+                              'Reply ONLY with:\n\n' +
+                              'TITLE: <title>\nBODY:\n<description>',
+                          },
+                          {
+                            role: 'user',
+                            content: `Generate a merge commit message for this diff:\n\n${diffText}`,
+                          },
+                        ],
+                        max_tokens: 500,
+                        temperature: 0.3,
+                      }),
+                    }
+                  );
+
+                  if (response.ok) {
+                    const data = await response.json();
+                    const reply = data.choices?.[0]?.message?.content || '';
+                    const titleMatch = reply.match(/^TITLE:\s*(.+)/im);
+                    const bodyMatch = reply.match(/^BODY:\n([\s\S]*)/im);
+                    const aiTitle = titleMatch ? titleMatch[1].trim() : '';
+                    const aiBody = bodyMatch ? bodyMatch[1].trim() : '';
+
+                    if (aiTitle) {
+                      aiSuggestion = `\n\n### Suggested merge commit (AI)\n\n` +
+                        `**Title:**\n\`${aiTitle}\`\n\n`;
+                      if (aiBody) {
+                        aiSuggestion +=
+                          `**Body:**\n\`\`\`\n${aiBody}\n\`\`\`\n`;
+                      }
+                    }
+                  } else {
+                    core.info(`NIM API returned ${response.status}`);
+                  }
+                }
+              } catch (e) {
+                core.info(`NIM suggestion failed: ${e.message}`);
+              }
+            }
 
             const body =
               `## PR summary (automated)\n\n` +
@@ -94,8 +162,8 @@ jobs:
               `| Author | @${pr.user.login} |\n\n` +
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
-              mergeMsgNote +
               `\n\n---\n` +
+              aiSuggestion +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +
               `Automation does not replace human review for kernel changes._`;
 
@@ -280,7 +348,6 @@ jobs:
               });
             }
 
-            let labelJustApplied = false;
             if (majorityMet) {
               await ensureLabel('ready-to-merge');
               try {
@@ -291,7 +358,6 @@ jobs:
                   labels: ['ready-to-merge'],
                 });
                 core.info('Applied label ready-to-merge');
-                labelJustApplied = true;
               } catch (e) {
                 core.setFailed(`Could not add ready-to-merge label: ${e.message}`);
               }
@@ -305,80 +371,5 @@ jobs:
                 });
               } catch (e) {
                 core.info('ready-to-merge label not present');
-              }
-            }
-
-            // Auto-merge with custom commit message if flags are set
-            if (majorityMet) {
-              const isTriggerEvent =
-                github.event_name === 'pull_request_review' ||
-                (github.event_name === 'pull_request' && context.payload.action === 'labeled');
-
-              if (isTriggerEvent) {
-                const title = pr.title || '';
-                const body = pr.body || '';
-
-                const stripHtmlComments = (text) =>
-                  (text || '').replace(/<!--[\s\S]*?-->/g, '');
-
-                const summaryVisible = stripHtmlComments(
-                  (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
-                );
-
-                const useTitle =
-                  /\[USE_PR_TITLE\]/i.test(title) ||
-                  /\[USE_PR_TITLE\]/i.test(summaryVisible);
-                const useDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
-
-                if (useTitle || useDesc) {
-                  const cleanPrTitle = (raw) =>
-                    (raw || '')
-                      .replace(/\[USE_PR_TITLE\]/gi, '')
-                      .replace(/\[USE_PR_DESC\]/gi, '')
-                      .replace(/^\[Pull Request #\d+\]\s*/i, '')
-                      .replace(/\s+/g, ' ')
-                      .trim();
-
-                  const extractSummary = (bodyText) => {
-                    const visible = stripHtmlComments(bodyText);
-                    const match = visible.match(
-                      /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
-                    );
-                    if (!match) return '';
-                    return match[1]
-                      .replace(/\[USE_PR_TITLE\]/gi, '')
-                      .replace(/\[USE_PR_DESC\]/gi, '')
-                      .split('\n')
-                      .map((line) => line.trimEnd())
-                      .filter((line) => line.trim().length > 0)
-                      .join('\n')
-                      .trim();
-                  };
-
-                  const newTitle = useTitle ? cleanPrTitle(title) : null;
-                  let newBody = null;
-                  if (useDesc) {
-                    newBody = extractSummary(body);
-                  }
-
-                  if (useTitle && !newTitle) {
-                    core.setFailed('USE_PR_TITLE would produce empty commit subject');
-                    return;
-                  }
-
-                  try {
-                    const mergeResult = await github.rest.pulls.merge({
-                      owner,
-                      repo,
-                      pull_number: prNumber,
-                      merge_method: 'merge',
-                      commit_title: newTitle,
-                      commit_message: newBody || '',
-                    });
-                    core.info(`Auto-merged PR #${prNumber} at ${mergeResult.data.sha}`);
-                  } catch (e) {
-                    core.setFailed(`Auto-merge failed: ${e.message}`);
-                  }
-                }
               }
             }
