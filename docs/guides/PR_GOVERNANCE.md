@@ -170,6 +170,25 @@ When you click **Merge**, you can ignore or clear the default title/body in GitH
 
 You do **not** need to add the **GitHub Actions** app to bypass if you use **A** or **B**.
 
+#### Auto-renamer + merge flags (troubleshooting)
+
+Three workflows interact on every PR:
+
+| Workflow | When | Role |
+|----------|------|------|
+| **Assign pull request number** | PR opened | Adds `[Pull Request #N]` to the **PR title** |
+| **Capture merge commit message** | PR open/update (and after assign finishes) | Strips `[USE_PR_TITLE]` / `[USE_PR_DESC]`, saves merge text |
+| **Sync merge commit** | PR merged | Rewrites the commit on `main` |
+
+| Symptom | Likely cause | Fix |
+|---------|----------------|-----|
+| Flags never removed; no **Merge commit message (saved)** comment | **Capture** / **Sync** workflows not on `main` yet | Merge the governance branch so both YAML files exist on `main` |
+| `[Pull Request #N]` missing after capture | Race on open (fixed in repo: capture re-fetches title before update) | Push latest workflows; re-run **Capture merge commit message** from **Actions** |
+| Saved message OK but `main` still has default squash text | Protected `main`; no PAT | Add repo secret `OPENKERNEL_REPO_PAT` (admin PAT with **Contents: write**, owner on ruleset **Bypass list**), or paste from the bot comment into **Squash and merge** |
+| **Sync merge commit** skipped / “not tip of main” | Another push landed on `main` right after merge | Wait for `main` to settle; **Actions → Sync merge commit → Run workflow** with the PR number |
+
+Put flags in the **visible** PR title and **## Summary** (not only inside `<!-- HTML comments -->`).
+
 ## Assigning PRs to people
 
 | Method | Setup |
