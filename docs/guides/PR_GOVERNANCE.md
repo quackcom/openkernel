@@ -165,7 +165,7 @@ When you click **Merge**, you can ignore or clear the default title/body in GitH
 
 | Option | What to do |
 |--------|------------|
-| **A. Admin PAT (recommended for automation)** | 1. GitHub → **Settings → Developer settings → Fine-grained personal access tokens** → token scoped to `openkernel` with **Contents: Read and write**.<br>2. Token owner must be on the ruleset **Bypass list** as **Repository admin** (your user — **not** the "GitHub Actions" app).<br>3. Repo → **Settings → Secrets and variables → Actions** → `OPENKERNEL_REPO_PAT` = that token.<br>4. After merge, **Sync merge commit** runs; or re-run it with the PR number. |
+| **A. Admin PAT (recommended for automation)** | 1. Fine-grained PAT scoped to `openkernel` with **Contents: Read and write** only (comments use **github-actions[bot]** via `GITHUB_TOKEN`, not the PAT).<br>2. Token owner on the ruleset **Bypass list** as **Repository admin** (your user — **not** the "GitHub Actions" app).<br>3. Repo secret `OPENKERNEL_REPO_PAT` = that token.<br>4. After merge, **Sync merge commit** rewrites `main`; or re-run it with the PR number. |
 | **B. Manual merge dialog** | On **Squash and merge**, edit the message and paste **Subject** / **Body** from **Merge commit message (saved)** on the PR. No PAT, no bypass for Actions. |
 
 You do **not** need to add the **GitHub Actions** app to bypass if you use **A** or **B**.
