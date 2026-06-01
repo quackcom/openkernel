@@ -6,6 +6,10 @@ name: Capture merge commit message
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Run again after auto-renamer adds [Pull Request #N] (avoids racing on open).
+  workflow_run:
+    workflows: [Assign pull request number]
+    types: [completed]
 
 permissions:
   pull-requests: write
@@ -18,6 +22,11 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'pull_request')
     steps:
       - name: Capture flags, store message, clean PR title and body
         uses: actions/github-script@v7
@@ -25,7 +34,19 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const prNumber = context.payload.pull_request.number;
+
+            let prNumber;
+            if (context.eventName === 'workflow_run') {
+              const wr = context.payload.workflow_run;
+              const prs = wr.pull_requests || [];
+              if (prs.length === 0) {
+                core.info('workflow_run has no linked PR; skipping.');
+                return;
+              }
+              prNumber = prs[0].number;
+            } else {
+              prNumber = context.payload.pull_request.number;
+            }
 
             const storeMarker = '<!-- openkernel-merge-commit-store';
             const storeEnd = '-->';
@@ -260,6 +281,20 @@ jobs:
             if (newBody !== body) updates.body = newBody;
 
             if (Object.keys(updates).length > 0) {
+              /* Re-fetch so [Pull Request #N] from assign-pull-request-number is not lost. */
+              if (updates.title) {
+                const { data: fresh } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                });
+                if (stored.useTitle) {
+                  updates.title = buildPrTitle(fresh.title, stored.subject);
+                } else {
+                  updates.title = buildPrTitle(fresh.title, undefined);
+                }
+              }
+
               await github.rest.pulls.update({
                 owner,
                 repo,
