@@ -37,7 +37,7 @@ See [[Filesystem-OKFS]] for full detail.
 
 | Command | Description |
 |---------|-------------|
-| `ls [path]` | List directory |
+| `ls <path>` | List directory |
 | `cd <path>` | Change working directory |
 | `pwd` | Print cwd |
 | `mkdir <path>` | Create directory |
@@ -56,6 +56,23 @@ After `edit myfile.txt`:
 - Type lines of text
 - **`:save`** or **`:w`** — write buffer to file and exit edit mode
 - **`:q`** — discard and exit
+- **`:p`** — print entire buffer with line numbers
+- **`:e <n> <text>`** — replace line N with `<text>`
+- **`:e <n>`** — load line N's content into the command buffer for editing
+
+### Inline line editing
+
+`:e <n>` with no text loads the current content of line N into your command buffer. You can then edit it and press Enter to replace the line in-place — no need to retype the whole line from memory.
+
+```
+edit:myfile.txt> :p
+1:Hello World
+2:This is a test
+edit:myfile.txt> :e 2
+edit:myfile.txt> This line was modified
+edit:myfile.txt> :save
+Saved.
+```
 
 Only **`.txt`** extensions are allowed for files.
 

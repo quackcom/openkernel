@@ -46,6 +46,10 @@ int fs_edit_begin(const char *path);
 int fs_edit_handle_line(const char *line, void (*emit)(const char *));
 void fs_edit_display_content(void (*emit)(const char *));
 
+/* Returns the content of a requested line (from ":e <n>") for the
+   shell to pre-populate the command buffer, or NULL if none pending. */
+const char *fs_edit_get_pending_line(void);
+
 /* Shell: returns 1 if command was handled */
 int fs_handle_command(const char *command, void (*emit)(const char *));
 void fs_show_help(void (*emit)(const char *));

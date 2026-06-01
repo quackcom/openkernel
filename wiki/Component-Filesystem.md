@@ -44,7 +44,9 @@ nodes[128] tree + kmalloc file buffers
 ## Editor state (static)
 
 - `edit_active`, `edit_path[]`, `edit_buf`, `edit_len`  
-- `fs_edit_handle_line` — `:save`, `:q`, or append line  
+- `edit_pending_line[]`, `edit_target_line` — inline editing support  
+- `fs_edit_handle_line` — `:save`, `:q`, `:p`, `:e <n> [text]`, or append line  
+- `fs_edit_get_pending_line` — shell reads this to pre-fill command buffer  
 
 ## Shell integration
 

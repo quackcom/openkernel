@@ -925,6 +925,22 @@ static void pseudo_console_execute(void)
         }
     }
 
+    /* If ":e <n>" loaded a line, pre-fill buffer and skip clearing */
+    {
+        const char *pending = fs_edit_get_pending_line();
+        if (pending) {
+            int plen = 0;
+            while (pending[plen] && plen < (int)sizeof(pseudo_cmd) - 2) {
+                pseudo_cmd[plen] = pending[plen];
+                plen++;
+            }
+            pseudo_cmd_len = plen;
+            pseudo_cmd_cursor = plen;
+            pseudo_cmd[plen] = '\0';
+            return;
+        }
+    }
+
     pseudo_cmd_len = 0;
     pseudo_cmd_cursor = 0;
     pseudo_cmd[0] = '\0';
@@ -1076,18 +1092,38 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
                     if (sc == 0x1C) { /* Enter - execute command */
                         printk("\n");
                         cmd[cmd_len] = '\0';
+                        int loaded_pending = 0;
                         if (cmd_len > 0) {
                             int was_edit = (cmd_len >= 5 && cmd[0] == 'e' && cmd[1] == 'd' && cmd[2] == 'i' && cmd[3] == 't' && cmd[4] == ' ');
                             execute_text_command(cmd);
-                            if (was_edit && fs_edit_is_active()) {
+                            /* If ":e <n>" loaded a line, pre-fill cmd buffer */
+                            {
+                                const char *pending = fs_edit_get_pending_line();
+                                if (pending) {
+                                    int plen = 0;
+                                    while (pending[plen] && plen < (int)sizeof(cmd) - 2) {
+                                        cmd[plen] = pending[plen];
+                                        plen++;
+                                    }
+                                    cmd_len = plen;
+                                    cmd_cursor = plen;
+                                    cmd[plen] = '\0';
+                                    loaded_pending = 1;
+                                }
+                            }
+                            if (!loaded_pending && was_edit && fs_edit_is_active()) {
                                 fs_edit_display_content(text_console_log);
                             }
                         }
-                        cmd_len = 0;
-                        cmd[0] = '\0';
-                        cmd_cursor = 0;
-                        vga_reserve_prompt_line();
-                        show_text_prompt();
+                        if (!loaded_pending) {
+                            cmd_len = 0;
+                            cmd[0] = '\0';
+                            cmd_cursor = 0;
+                            vga_reserve_prompt_line();
+                            show_text_prompt();
+                        } else {
+                            show_text_prompt();
+                        }
                     } else if (sc == 0x0E) { /* Backspace */
                         if (cmd_cursor > 0) {
                             for (int i = cmd_cursor - 1; i < cmd_len - 1; i++)
