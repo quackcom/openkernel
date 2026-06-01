@@ -67,6 +67,12 @@ static int saved_boot_loader_valid = 0;
 /* Disk-based filesystem context */
 static okfs_t g_disk_fs;
 
+/* Disk edit tracking: when d:edit copies a file to in-memory FS for
+   editing, this stores the real disk path for save-back. */
+#define DISK_EDIT_TEMP "/__disk_edit_temp__"
+static int g_disk_edit_active = 0;
+static char g_disk_edit_path[FS_MAX_PATH];
+
 static void vga_replace_line_text(int line, const char *text);
 static void vga_reserve_prompt_line(void);
 static void render_loading_status(void);
@@ -792,6 +798,7 @@ static void show_help_disk(void (*log_fn)(const char *))
     log_fn("d:cat <path>        - Print file");
     log_fn("d:write <path> \"t\"  - Write file");
     log_fn("d:append <path> \"t\" - Append to file");
+    log_fn("d:edit <path>       - Edit file with :save/:q");
     log_fn("d:mkdir <path>      - Create directory");
     log_fn("d:rm <path>         - Remove file or empty dir");
     log_fn("d:format            - Format disk (destroys data)");
@@ -959,6 +966,40 @@ static int execute_console_command(
             int err = okfs_delete(&g_disk_fs, sub + 3);
             if (err == OKFS_OK) log_fn("Removed.");
             else log_fn(okfs_strerror(err));
+        } else if (kstrlen(sub) >= 5 && sub[0] == 'e' && sub[1] == 'd' && sub[2] == 'i' && sub[3] == 't' && sub[4] == ' ') {
+            /* d:edit <path> — copy file to in-memory FS for editing */
+            const char *epath = sub + 5;
+            while (*epath == ' ') epath++;
+            uint32_t dsize = 0;
+            uint8_t *dcontent = okfs_read(&g_disk_fs, epath, &dsize);
+            if (!dcontent) {
+                log_fn("File not found on disk");
+                goto skip_disk_cmd;
+            }
+            /* Write to temp file in the in-memory FS */
+            int err = fs_write_file(DISK_EDIT_TEMP, (const char *)dcontent, dsize);
+            kfree(dcontent);
+            if (err != FS_OK) {
+                log_fn("Failed to stage file for editing");
+                goto skip_disk_cmd;
+            }
+            /* Enter edit mode on the temp file */
+            err = fs_edit_begin(DISK_EDIT_TEMP);
+            if (err != FS_OK) {
+                log_fn("Failed to enter edit mode");
+                fs_rm(DISK_EDIT_TEMP);
+                goto skip_disk_cmd;
+            }
+            /* Remember the real disk path for sync-back on :save */
+            int pi = 0;
+            while (epath[pi] && pi < FS_MAX_PATH - 1) {
+                g_disk_edit_path[pi] = epath[pi];
+                pi++;
+            }
+            g_disk_edit_path[pi] = '\0';
+            g_disk_edit_active = 1;
+            log_fn("Edit mode. :save writes back to disk.");
+            fs_edit_display_content(log_fn);
         } else {
             /* Try write / append by checking for quoted content */
             const char *spc;
@@ -970,7 +1011,7 @@ static int execute_console_command(
                 is_append = 1;
                 spc = sub + 7;
             } else {
-                log_fn("Unknown disk command. Try: d:ls, d:cat, d:write, d:append, d:mkdir, d:rm, d:format");
+                log_fn("Unknown disk command. Try: d:ls, d:cat, d:write, d:append, d:edit, d:mkdir, d:rm, d:format");
                 log_fn("  d:write <path> \"text\"  - note: quotes required");
                 goto skip_disk_cmd;
             }
@@ -1023,6 +1064,7 @@ static int execute_console_command(
         }
 skip_disk_cmd:
         ;
+    } else if (kstrlen(command) > 0) {
         log_fn("Unknown command");
         log_fn("Type 'help' for available commands");
         return 0;
@@ -1038,6 +1080,24 @@ static void pseudo_console_execute(void)
         append_gfx_prompt_line(pseudo_cmd);
         if (fs_edit_is_active()) {
             fs_edit_handle_line(pseudo_cmd, pseudo_console_log);
+            /* If edit mode just ended and we were editing a disk file,
+               read the result back and write to disk. */
+            if (!fs_edit_is_active() && g_disk_edit_active) {
+                g_disk_edit_active = 0;
+                size_t sz = 0;
+                const char *content = fs_read_file(DISK_EDIT_TEMP, &sz);
+                if (content) {
+                    int err = okfs_write(&g_disk_fs, g_disk_edit_path,
+                                         (const uint8_t *)content, sz);
+                    if (err == OKFS_OK)
+                        pseudo_console_log("Synced to disk.");
+                    else
+                        pseudo_console_log(okfs_strerror(err));
+                    kfree((void *)content);
+                }
+                fs_rm(DISK_EDIT_TEMP);
+                g_disk_edit_path[0] = '\0';
+            }
         } else if (!fs_handle_command(pseudo_cmd, pseudo_console_log)) {
             execute_console_command(pseudo_cmd, pseudo_console_log, 1);
         }
@@ -1068,6 +1128,24 @@ static void execute_text_command(const char *command)
 {
     if (fs_edit_is_active()) {
         fs_edit_handle_line(command, text_console_log);
+        /* If edit mode just ended and we were editing a disk file,
+           read the result back and write to disk. */
+        if (!fs_edit_is_active() && g_disk_edit_active) {
+            g_disk_edit_active = 0;
+            size_t sz = 0;
+            const char *content = fs_read_file(DISK_EDIT_TEMP, &sz);
+            if (content) {
+                int err = okfs_write(&g_disk_fs, g_disk_edit_path,
+                                     (const uint8_t *)content, sz);
+                if (err == OKFS_OK)
+                    text_console_log("Synced to disk.");
+                else
+                    text_console_log(okfs_strerror(err));
+                kfree((void *)content);
+            }
+            fs_rm(DISK_EDIT_TEMP);
+            g_disk_edit_path[0] = '\0';
+        }
         return;
     }
     if (fs_handle_command(command, text_console_log)) {

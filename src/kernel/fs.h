@@ -37,6 +37,10 @@ int fs_cat(const char *path, void (*emit)(const char *));
 int fs_write_file(const char *path, const char *data, size_t len);
 int fs_append_file(const char *path, const char *data, size_t len);
 
+/* Read a file into a kmalloc'd buffer (caller must kfree).
+   Returns NULL on error. */
+const char *fs_read_file(const char *path, size_t *size_out);
+
 const char *fs_strerror(int err);
 
 /* Interactive .txt editor (:save / :q) */

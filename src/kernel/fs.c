@@ -530,6 +530,31 @@ int fs_append_file(const char *path, const char *data, size_t len)
     return fs_set_file_data(id, data, len, 1);
 }
 
+const char *fs_read_file(const char *path, size_t *size_out)
+{
+    if (size_out) *size_out = 0;
+
+    int id = fs_resolve(cwd, path, 0);
+    if (id < 0) return NULL;
+    if (nodes[id].type != FS_TYPE_FILE) return NULL;
+
+    if (nodes[id].size == 0) {
+        char *empty = (char *)kmalloc(1);
+        if (!empty) return NULL;
+        empty[0] = '\0';
+        if (size_out) *size_out = 0;
+        return empty;
+    }
+
+    char *buf = (char *)kmalloc(nodes[id].size + 1);
+    if (!buf) return NULL;
+    for (size_t i = 0; i < nodes[id].size; i++)
+        buf[i] = nodes[id].data[i];
+    buf[nodes[id].size] = '\0';
+    if (size_out) *size_out = nodes[id].size;
+    return buf;
+}
+
 /* ---- Editor ---- */
 
 static int edit_buf_append(const char *text, size_t len)
