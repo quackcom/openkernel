@@ -23,5 +23,30 @@
     "name": "ready-to-merge",
     "color": "0e8a16",
     "description": "Collaborator majority approval met (PR governance workflow)"
+  },
+  {
+    "name": "announcement",
+    "color": "bfd4f2",
+    "description": "Official project announcements (discussion template)"
+  },
+  {
+    "name": "general",
+    "color": "f0f0f0",
+    "description": "General discussion (discussion template)"
+  },
+  {
+    "name": "idea",
+    "color": "d4c5f9",
+    "description": "Feature ideas and suggestions (discussion template)"
+  },
+  {
+    "name": "poll",
+    "color": "f9d8c5",
+    "description": "Community polls (discussion template)"
+  },
+  {
+    "name": "show-and-tell",
+    "color": "c5f9d8",
+    "description": "Show off your work (discussion template)"
   }
 ]
