@@ -188,6 +188,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           script: |
+            const { getOctokit } = require('@actions/github');
+
             const rewrite = JSON.parse(
               Buffer.from('${{ steps.prepare.outputs.rewrite_b64 }}', 'base64').toString('utf8')
             );
@@ -210,7 +212,7 @@ jobs:
             let tokenUsed = '';
 
             for (const { label, token } of attempts) {
-              const octokit = github.getOctokit(token);
+              const octokit = getOctokit(token);
               try {
                 const { data: newCommit } = await octokit.rest.git.createCommit({
                   owner,
