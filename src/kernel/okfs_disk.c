@@ -811,6 +811,16 @@ int okfs_list(okfs_t *fs, const char *path, void (*emit)(const char *))
     return OKFS_OK;
 }
 
+int okfs_isdir(okfs_t *fs, const char *path)
+{
+    if (!fs || !fs->mounted) return -1;
+    uint32_t inum = resolve_path(fs, path);
+    if (inum == 0xFFFFFFFF) return -1;
+    uint8_t inode_buf[INODE_SIZE];
+    if (inode_read(fs, inum, inode_buf) != 0) return -1;
+    return (inode_buf[INODE_TYPE_OFF] == OKFS_TYPE_DIR) ? 0 : -1;
+}
+
 int okfs_cat(okfs_t *fs, const char *path, void (*emit)(const char *))
 {
     if (!fs || !fs->mounted) return OKFS_ERR_NOT_MOUNTED;

@@ -66,6 +66,41 @@ static int saved_boot_loader_valid = 0;
 
 /* Disk-based filesystem context */
 static okfs_t g_disk_fs;
+static char g_disk_cwd[FS_MAX_PATH] = "/";
+
+/* Resolve a disk path: if absolute (starts with /), use as-is;
+   otherwise prepend current working directory.
+   Result is written to out (max OUT_MAX chars). Returns out. */
+static const char *disk_resolve_path(const char *path, char *out, size_t out_max)
+{
+    if (!path || !path[0]) {
+        out[0] = '\0';
+        return out;
+    }
+    if (path[0] == '/') {
+        size_t i = 0;
+        while (path[i] && i < out_max - 1) { out[i] = path[i]; i++; }
+        out[i] = '\0';
+        return out;
+    }
+    /* Relative — prepend cwd */
+    size_t cwdi = 0;
+    while (g_disk_cwd[cwdi] && cwdi < out_max - 2) { out[cwdi] = g_disk_cwd[cwdi]; cwdi++; }
+    /* Ensure cwd ends with / */
+    if (cwdi == 0 || out[cwdi - 1] != '/') { out[cwdi++] = '/'; }
+    size_t pi = 0;
+    while (path[pi] && cwdi < out_max - 2) { out[cwdi++] = path[pi++]; }
+    out[cwdi] = '\0';
+    return out;
+}
+
+/* Normalize a path by stripping trailing slash (except for root). */
+static void disk_normalize_path(char *path)
+{
+    size_t len = 0;
+    while (path[len]) len++;
+    while (len > 1 && path[len - 1] == '/') path[--len] = '\0';
+}
 
 /* Disk edit tracking: when d:edit copies a file to in-memory FS for
    editing, this stores the real disk path for save-back. */
@@ -794,6 +829,8 @@ static void show_help_os(void (*log_fn)(const char *))
 static void show_help_disk(void (*log_fn)(const char *))
 {
     log_fn("Disk commands (on-disk OKFS via RAM disk / ATA):");
+    log_fn("d:cd <path>         - Change working directory");
+    log_fn("d:pwd               - Print working directory");
     log_fn("d:ls <path>         - List directory");
     log_fn("d:cat <path>        - Print file");
     log_fn("d:write <path> \"t\"  - Write file");
@@ -939,6 +976,7 @@ static int execute_console_command(
             block_device_t *dev = g_disk_fs.dev;
             if (okfs_format(dev, 64) == OKFS_OK) {
                 if (okfs_mount(&g_disk_fs, dev) == OKFS_OK) {
+                    g_disk_cwd[0] = '/'; g_disk_cwd[1] = '\0';
                     log_fn("Disk formatted and remounted.");
                 } else {
                     log_fn("Format OK but remount failed.");
@@ -952,48 +990,70 @@ static int execute_console_command(
     } else if (kstrlen(command) >= 3 && command[0] == 'd' && command[1] == ':') {
         /* Disk command dispatcher */
         const char *sub = command + 2;
-        if (kstrlen(sub) >= 4 && sub[0] == 'l' && sub[1] == 's' && sub[2] == ' ') {
-            okfs_list(&g_disk_fs, sub + 3, log_fn);
+        char d_resolved[FS_MAX_PATH];
+
+        if (kstrlen(sub) >= 2 && sub[0] == 'c' && sub[1] == 'd' && (sub[2] == '\0' || sub[2] == ' ')) {
+            const char *dest = (sub[2] == ' ') ? sub + 3 : "/";
+            while (*dest == ' ') dest++;
+            char resolved[FS_MAX_PATH];
+            disk_resolve_path(dest, resolved, sizeof(resolved));
+            disk_normalize_path(resolved);
+            /* Check it exists and is a directory */
+            if (okfs_isdir(&g_disk_fs, resolved) != 0) {
+                log_fn("Not found");
+                goto skip_disk_cmd;
+            }
+            size_t ci = 0;
+            while (resolved[ci] && ci < FS_MAX_PATH - 1) { g_disk_cwd[ci] = resolved[ci]; ci++; }
+            g_disk_cwd[ci] = '\0';
+            goto skip_disk_cmd;
+        } else if (kstrlen(sub) >= 4 && sub[0] == 'p' && sub[1] == 'w' && sub[2] == 'd' && sub[3] == '\0') {
+            log_fn(g_disk_cwd);
+            goto skip_disk_cmd;
+        } else if (kstrlen(sub) >= 4 && sub[0] == 'l' && sub[1] == 's' && sub[2] == ' ') {
+            disk_resolve_path(sub + 3, d_resolved, sizeof(d_resolved));
+            disk_normalize_path(d_resolved);
+            okfs_list(&g_disk_fs, d_resolved, log_fn);
         } else if (kstrlen(sub) >= 5 && sub[0] == 'c' && sub[1] == 'a' && sub[2] == 't' && sub[3] == ' ') {
-            okfs_list(&g_disk_fs, sub + 3, log_fn);
-        } else if (kstrlen(sub) >= 5 && sub[0] == 'c' && sub[1] == 'a' && sub[2] == 't' && sub[3] == ' ') {
-            okfs_cat(&g_disk_fs, sub + 4, log_fn);
+            disk_resolve_path(sub + 4, d_resolved, sizeof(d_resolved));
+            okfs_cat(&g_disk_fs, d_resolved, log_fn);
         } else if (kstrlen(sub) >= 7 && sub[0] == 'm' && sub[1] == 'k' && sub[2] == 'd' && sub[3] == 'i' && sub[4] == 'r' && sub[5] == ' ') {
-            int err = okfs_create(&g_disk_fs, sub + 6, OKFS_TYPE_DIR);
+            disk_resolve_path(sub + 6, d_resolved, sizeof(d_resolved));
+            disk_normalize_path(d_resolved);
+            int err = okfs_create(&g_disk_fs, d_resolved, OKFS_TYPE_DIR);
             if (err >= 0) log_fn("Directory created.");
             else log_fn(okfs_strerror(err));
         } else if (kstrlen(sub) >= 3 && sub[0] == 'r' && sub[1] == 'm' && sub[2] == ' ') {
-            int err = okfs_delete(&g_disk_fs, sub + 3);
+            disk_resolve_path(sub + 3, d_resolved, sizeof(d_resolved));
+            disk_normalize_path(d_resolved);
+            int err = okfs_delete(&g_disk_fs, d_resolved);
             if (err == OKFS_OK) log_fn("Removed.");
             else log_fn(okfs_strerror(err));
         } else if (kstrlen(sub) >= 5 && sub[0] == 'e' && sub[1] == 'd' && sub[2] == 'i' && sub[3] == 't' && sub[4] == ' ') {
             /* d:edit <path> — copy file to in-memory FS for editing */
-            const char *epath = sub + 5;
-            while (*epath == ' ') epath++;
+            disk_resolve_path(sub + 5, d_resolved, sizeof(d_resolved));
+            disk_normalize_path(d_resolved);
             uint32_t dsize = 0;
-            uint8_t *dcontent = okfs_read(&g_disk_fs, epath, &dsize);
+            uint8_t *dcontent = okfs_read(&g_disk_fs, d_resolved, &dsize);
             if (!dcontent) {
                 log_fn("File not found on disk");
                 goto skip_disk_cmd;
             }
-            /* Write to temp file in the in-memory FS */
             int err = fs_write_file(DISK_EDIT_TEMP, (const char *)dcontent, dsize);
             kfree(dcontent);
             if (err != FS_OK) {
                 log_fn("Failed to stage file for editing");
                 goto skip_disk_cmd;
             }
-            /* Enter edit mode on the temp file */
             err = fs_edit_begin(DISK_EDIT_TEMP);
             if (err != FS_OK) {
                 log_fn("Failed to enter edit mode");
                 fs_rm(DISK_EDIT_TEMP);
                 goto skip_disk_cmd;
             }
-            /* Remember the real disk path for sync-back on :save */
             int pi = 0;
-            while (epath[pi] && pi < FS_MAX_PATH - 1) {
-                g_disk_edit_path[pi] = epath[pi];
+            while (d_resolved[pi] && pi < FS_MAX_PATH - 1) {
+                g_disk_edit_path[pi] = d_resolved[pi];
                 pi++;
             }
             g_disk_edit_path[pi] = '\0';
@@ -1011,7 +1071,7 @@ static int execute_console_command(
                 is_append = 1;
                 spc = sub + 7;
             } else {
-                log_fn("Unknown disk command. Try: d:ls, d:cat, d:write, d:append, d:edit, d:mkdir, d:rm, d:format");
+                log_fn("Unknown disk command. Try: d:ls, d:cat, d:write, d:append, d:edit, d:mkdir, d:rm, d:cd, d:pwd, d:format");
                 log_fn("  d:write <path> \"text\"  - note: quotes required");
                 goto skip_disk_cmd;
             }
@@ -1019,14 +1079,19 @@ static int execute_console_command(
             /* Skip spaces */
             while (*spc == ' ') spc++;
             /* Extract path (up to space or quote) */
-            char dpath[256];
+            char dpath_raw[256];
             int pi = 0;
             if (*spc == '"') {
                 log_fn("Usage: d:write <path> \"text\"  (path first, then quoted text)");
                 goto skip_disk_cmd;
             }
-            while (*spc && *spc != ' ' && *spc != '"' && pi < 254) dpath[pi++] = *spc++;
-            dpath[pi] = '\0';
+            while (*spc && *spc != ' ' && *spc != '"' && pi < 254) dpath_raw[pi++] = *spc++;
+            dpath_raw[pi] = '\0';
+            /* Resolve path against cwd */
+            char dpath[256];
+            disk_resolve_path(dpath_raw, dpath, sizeof(dpath));
+            disk_normalize_path(dpath);
+
             while (*spc == ' ') spc++;
             /* Extract quoted content */
             if (*spc != '"') {

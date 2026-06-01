@@ -59,6 +59,10 @@ int  okfs_delete(okfs_t *fs, const char *path);
    Entries are formatted as "[DIR]  name" or "[FILE] name (N bytes)". */
 int  okfs_list(okfs_t *fs, const char *path, void (*emit)(const char *));
 
+/* Check if a path exists on disk and is a directory.
+   Returns 0 if it's a valid directory, -1 otherwise. */
+int  okfs_isdir(okfs_t *fs, const char *path);
+
 /* Print file contents to emit(). */
 int  okfs_cat(okfs_t *fs, const char *path, void (*emit)(const char *));
 
