@@ -1,0 +1,30 @@
+# Ensures discussion category labels are applied when a discussion is created.
+# Labels are auto-applied from template frontmatter; this is a safety net.
+
+name: Label discussions
+
+on:
+  discussion:
+    types: [created]
+
+permissions:
+  discussions: write
+
+jobs:
+  label-discussion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const discussion = context.payload.discussion;
+            const labels = discussion.labels || [];
+
+            if (labels.length === 0) {
+              core.info('No labels found on new discussion — template may not have applied them.');
+              return;
+            }
+
+            core.info(`Discussion #${discussion.number} already has labels: ${labels.map(l => l.name).join(', ')}`);

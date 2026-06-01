@@ -1,0 +1,19 @@
+title: "[General] "
+labels: ["general"]
+body:
+  - type: textarea
+    id: topic
+    attributes:
+      label: Topic
+      description: What's on your mind?
+      placeholder: Ask or discuss anything about openkernel
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Expand on your question or discussion point
+      placeholder: More context...
+    validations:
+      required: false

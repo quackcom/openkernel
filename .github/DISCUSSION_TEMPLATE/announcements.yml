@@ -1,0 +1,27 @@
+title: "[Announcement] "
+labels: ["announcement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Brief overview of this announcement
+      placeholder: What's this about?
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Elaborate here
+      placeholder: Full details...
+    validations:
+      required: false
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Timeline / Impact
+      description: Dates, milestones, or effects on contributors
+      placeholder: When and what's affected?
+    validations:
+      required: false

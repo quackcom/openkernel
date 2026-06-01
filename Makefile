@@ -35,6 +35,13 @@ MEMORY_C = $(KERNEL_DIR)/memory.c
 PROCESS_C = $(KERNEL_DIR)/process.c
 SYNC_C   = $(KERNEL_DIR)/sync.c
 FS_C     = $(KERNEL_DIR)/fs.c
+BLOCK_C  = $(KERNEL_DIR)/block.c
+OKFS_DISK_C = $(KERNEL_DIR)/okfs_disk.c
+
+# Driver sources
+DRV_DIR  = $(SRC_DIR)/drivers
+ATA_C    = $(DRV_DIR)/ata.c
+RAMDISK_C = $(DRV_DIR)/ramdisk.c
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -52,6 +59,10 @@ MEMORY_OBJ = $(BUILD_DIR)/memory.o
 PROCESS_OBJ = $(BUILD_DIR)/process.o
 SYNC_OBJ   = $(BUILD_DIR)/sync.o
 FS_OBJ     = $(BUILD_DIR)/fs.o
+BLOCK_OBJ  = $(BUILD_DIR)/block.o
+ATA_OBJ    = $(BUILD_DIR)/ata.o
+RAMDISK_OBJ = $(BUILD_DIR)/ramdisk.o
+OKFS_DISK_OBJ = $(BUILD_DIR)/okfs_disk.o
 
 # Output files
 KERNEL_ELF = $(BUILD_DIR)/kernel.elf
@@ -72,7 +83,7 @@ $(BUILD_DIR):
 	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 
 # Build kernel ELF executable
-$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(SYNC_OBJ) $(FS_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
+$(KERNEL_ELF): $(BOOT_OBJ) $(ISR_OBJ) $(CONTEXT_SWITCH_OBJ) $(IO_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_SETUP_OBJ) $(TIMER_OBJ) $(KEYBOARD_OBJ) $(DISPLAY_OBJ) $(MEMORY_OBJ) $(PROCESS_OBJ) $(SYNC_OBJ) $(FS_OBJ) $(BLOCK_OBJ) $(ATA_OBJ) $(RAMDISK_OBJ) $(OKFS_DISK_OBJ) $(KERNEL_OBJ) | $(BUILD_DIR)
 	@echo "Linking kernel..."
 	$(LD) $(LDFLAGS) -o $@ $^
 	@echo "Kernel built: $@"
@@ -134,6 +145,22 @@ $(FS_OBJ): $(FS_C) $(KERNEL_DIR)/fs.h $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | 
 	@echo "Compiling filesystem..."
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(FS_C)
 
+$(BLOCK_OBJ): $(BLOCK_C) $(KERNEL_DIR)/block.h $(KERNEL_HEADER) | $(BUILD_DIR)
+	@echo "Compiling block device layer..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(BLOCK_C)
+
+$(ATA_OBJ): $(ATA_C) $(DRV_DIR)/ata.h $(KERNEL_DIR)/block.h $(KERNEL_HEADER) | $(BUILD_DIR)
+	@echo "Compiling ATA PIO driver..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -I$(SRC_DIR) -c -o $@ $(ATA_C)
+
+$(RAMDISK_OBJ): $(RAMDISK_C) $(DRV_DIR)/ramdisk.h $(KERNEL_DIR)/block.h $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | $(BUILD_DIR)
+	@echo "Compiling RAM disk driver..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -I$(SRC_DIR) -c -o $@ $(RAMDISK_C)
+
+$(OKFS_DISK_OBJ): $(OKFS_DISK_C) $(KERNEL_DIR)/okfs_disk.h $(KERNEL_DIR)/block.h $(KERNEL_DIR)/memory.h $(KERNEL_HEADER) | $(BUILD_DIR)
+	@echo "Compiling on-disk OKFS..."
+	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -I$(SRC_DIR) -c -o $@ $(OKFS_DISK_C)
+
 $(KERNEL_OBJ): $(KERNEL_C) $(KERNEL_HEADER) | $(BUILD_DIR)
 	@echo "Compiling kernel..."
 	$(CC) $(CFLAGS) -I$(KERNEL_DIR) -c -o $@ $(KERNEL_C)
@@ -155,10 +182,39 @@ iso-wsl: $(KERNEL_ELF)
 	@echo "Building ISO via WSL..."
 	@wsl -e bash -lc "set -e; command -v grub-mkrescue >/dev/null || { echo 'Installing grub-pc-bin and xorriso in WSL...'; sudo apt-get update -qq && sudo apt-get install -y grub-pc-bin xorriso; }; cd \"$$(wslpath -u '$(CURDIR)')\" && $(MAKE) iso GRUB_MKRESCUE=grub-mkrescue XORRISO=xorriso"
 
-# Run with QEMU
-run: $(KERNEL_ELF)
+# Run with QEMU (with disk image for ATA testing)
+DISK_IMG = $(BUILD_DIR)/disk.img
+
+run: $(KERNEL_ELF) $(DISK_IMG)
 	@echo "Starting QEMU..."
+	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it -hda $(DISK_IMG)
+
+# Create an empty disk image (32 MB, raw format)
+$(DISK_IMG): | $(BUILD_DIR)
+	@if not exist $(DISK_IMG) ( \
+		echo Creating disk image... && \
+		fsutil file createnew $(DISK_IMG) 33554432 >nul \
+	) else ( \
+		echo Disk image already exists. && \
+		echo To recreate: del $(DISK_IMG) && make run \
+	)
+
+# Run without disk image (RAM disk only)
+run-nodisk: $(KERNEL_ELF)
+	@echo "Starting QEMU (no disk)..."
 	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it
+
+# Create floppy image (1.44 MB)
+FLOPPY_IMG = $(BUILD_DIR)/floppy.img
+floppy-img: $(KERNEL_ELF)
+	@echo "Creating floppy image..."
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
+	@fsutil file createnew $(FLOPPY_IMG) 1474560 >nul 2>&1 && echo Floppy image: $(FLOPPY_IMG) || echo Failed to create floppy image
+
+# Run with floppy
+run-floppy: $(KERNEL_ELF) $(FLOPPY_IMG)
+	@echo "Starting QEMU with floppy..."
+	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it -fda $(FLOPPY_IMG)
 
 # Run with ISO (requires GRUB)
 run-iso: iso

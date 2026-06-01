@@ -1,0 +1,27 @@
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What problem are you trying to solve?
+      placeholder: The current limitation or pain point...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your idea
+      placeholder: How would this work?
+    validations:
+      required: true
+  - type: textarea
+    id: concerns
+    attributes:
+      label: Potential Concerns
+      description: Known trade-offs or open questions
+      placeholder: Things to consider...
+    validations:
+      required: false

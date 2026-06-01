@@ -1,0 +1,27 @@
+title: "[Show & Tell] "
+labels: ["show-and-tell"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What I Built / Learned
+      description: Describe your work
+      placeholder: I made a thing...
+    validations:
+      required: true
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots / Demos
+      description: Links, images, or code snippets
+      placeholder: Paste links or drag images...
+    validations:
+      required: false
+  - type: textarea
+    id: links
+    attributes:
+      label: Relevant Links
+      description: PRs, branches, or external resources
+      placeholder: Related URLs...
+    validations:
+      required: false

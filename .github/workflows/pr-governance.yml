@@ -137,10 +137,15 @@ jobs:
                 : context.payload.pull_request.number
             );
 
-            const raw = fs.readFileSync('.github/COLLABORATORS', 'utf8');
-            const collaborators = raw.split('\n')
-              .map((l) => l.trim().toLowerCase())
-              .filter((l) => l && !l.startsWith('#'));
+            let collaborators = [];
+            try {
+              const raw = fs.readFileSync('.github/COLLABORATORS', 'utf8');
+              collaborators = raw.split('\n')
+                .map((l) => l.trim().toLowerCase())
+                .filter((l) => l && !l.startsWith('#'));
+            } catch (e) {
+              core.warning('Could not read .github/COLLABORATORS, treating as empty');
+            }
 
             if (collaborators.length === 0) {
               core.setFailed('No collaborators listed in .github/COLLABORATORS');

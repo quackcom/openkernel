@@ -7,6 +7,10 @@
 #include "keyboard.h"
 #include "display.h"
 #include "fs.h"
+#include "block.h"
+#include "okfs_disk.h"
+#include "../drivers/ata.h"
+#include "../drivers/ramdisk.h"
 #include <stdarg.h>
 
 /* VGA Text Mode Constants */
@@ -59,6 +63,9 @@ static uint32_t saved_mem_lower = 0;
 static uint32_t saved_mem_upper = 0;
 static char saved_boot_loader[64] = "";
 static int saved_boot_loader_valid = 0;
+
+/* Disk-based filesystem context */
+static okfs_t g_disk_fs;
 
 static void vga_replace_line_text(int line, const char *text);
 static void vga_reserve_prompt_line(void);
@@ -768,6 +775,7 @@ static void show_help_main(void (*log_fn)(const char *))
     log_fn("                       pl, cz, sk, hu, ro, tr");
     log_fn("cmd.print(\"msg\")    - Print a message");
     log_fn("help --fs           - Show filesystem commands");
+    log_fn("help --disk         - Show disk commands");
 }
 
 static void show_help_os(void (*log_fn)(const char *))
@@ -775,6 +783,18 @@ static void show_help_os(void (*log_fn)(const char *))
     log_fn("OS commands:");
     log_fn("os.version          - Show kernel version");
     log_fn("os.bootinfo         - Show boot information");
+}
+
+static void show_help_disk(void (*log_fn)(const char *))
+{
+    log_fn("Disk commands (on-disk OKFS via RAM disk / ATA):");
+    log_fn("d:ls <path>         - List directory");
+    log_fn("d:cat <path>        - Print file");
+    log_fn("d:write <path> \"t\"  - Write file");
+    log_fn("d:append <path> \"t\" - Append to file");
+    log_fn("d:mkdir <path>      - Create directory");
+    log_fn("d:rm <path>         - Remove file or empty dir");
+    log_fn("d:format            - Format disk (destroys data)");
 }
 
 static int execute_console_command(
@@ -786,6 +806,8 @@ static int execute_console_command(
         show_help_main(log_fn);
     } else if (streq(command, "help --os")) {
         show_help_os(log_fn);
+    } else if (streq(command, "help --disk")) {
+        show_help_disk(log_fn);
     } else if (streq(command, "clear")) {
         if (graphics_console) {
             clear_gfx_log();
@@ -904,7 +926,103 @@ static int execute_console_command(
             b[bi] = '\0';
             log_fn(b);
         }
-    } else if (kstrlen(command) > 0) {
+    } else if (kstrlen(command) >= 7 && streq(command, "d:format")) {
+        if (g_disk_fs.mounted) {
+            log_fn("Formatting disk...");
+            block_device_t *dev = g_disk_fs.dev;
+            if (okfs_format(dev, 64) == OKFS_OK) {
+                if (okfs_mount(&g_disk_fs, dev) == OKFS_OK) {
+                    log_fn("Disk formatted and remounted.");
+                } else {
+                    log_fn("Format OK but remount failed.");
+                }
+            } else {
+                log_fn("Format failed.");
+            }
+        } else {
+            log_fn("No disk filesystem mounted.");
+        }
+    } else if (kstrlen(command) >= 3 && command[0] == 'd' && command[1] == ':') {
+        /* Disk command dispatcher */
+        const char *sub = command + 2;
+        if (kstrlen(sub) >= 3 && streq(sub, "ls")) {
+            okfs_list(&g_disk_fs, "", log_fn);
+        } else if (kstrlen(sub) >= 4 && sub[0] == 'l' && sub[1] == 's' && sub[2] == ' ') {
+            okfs_list(&g_disk_fs, sub + 3, log_fn);
+        } else if (kstrlen(sub) >= 5 && sub[0] == 'c' && sub[1] == 'a' && sub[2] == 't' && sub[3] == ' ') {
+            okfs_cat(&g_disk_fs, sub + 4, log_fn);
+        } else if (kstrlen(sub) >= 7 && sub[0] == 'm' && sub[1] == 'k' && sub[2] == 'd' && sub[3] == 'i' && sub[4] == 'r' && sub[5] == ' ') {
+            int err = okfs_create(&g_disk_fs, sub + 6, OKFS_TYPE_DIR);
+            if (err >= 0) log_fn("Directory created.");
+            else log_fn(okfs_strerror(err));
+        } else if (kstrlen(sub) >= 3 && sub[0] == 'r' && sub[1] == 'm' && sub[2] == ' ') {
+            int err = okfs_delete(&g_disk_fs, sub + 3);
+            if (err == OKFS_OK) log_fn("Removed.");
+            else log_fn(okfs_strerror(err));
+        } else {
+            /* Try write / append by checking for quoted content */
+            const char *spc;
+            int is_write = 0, is_append = 0;
+            if (kstrlen(sub) >= 6 && sub[0] == 'w' && sub[1] == 'r' && sub[2] == 'i' && sub[3] == 't' && sub[4] == 'e' && sub[5] == ' ') {
+                is_write = 1;
+                spc = sub + 6;
+            } else if (kstrlen(sub) >= 7 && sub[0] == 'a' && sub[1] == 'p' && sub[2] == 'p' && sub[3] == 'e' && sub[4] == 'n' && sub[5] == 'd' && sub[6] == ' ') {
+                is_append = 1;
+                spc = sub + 7;
+            } else {
+                log_fn("Unknown disk command. Try: d:ls, d:cat, d:write, d:append, d:mkdir, d:rm, d:format");
+                log_fn("  d:write <path> \"text\"  - note: quotes required");
+                goto skip_disk_cmd;
+            }
+
+            /* Skip spaces */
+            while (*spc == ' ') spc++;
+            /* Extract path (up to space or quote) */
+            char dpath[256];
+            int pi = 0;
+            if (*spc == '"') {
+                log_fn("Usage: d:write <path> \"text\"  (path first, then quoted text)");
+                goto skip_disk_cmd;
+            }
+            while (*spc && *spc != ' ' && *spc != '"' && pi < 254) dpath[pi++] = *spc++;
+            dpath[pi] = '\0';
+            while (*spc == ' ') spc++;
+            /* Extract quoted content */
+            if (*spc != '"') {
+                log_fn("Usage: d:write <path> \"text\"");
+                goto skip_disk_cmd;
+            }
+            spc++; /* skip opening quote */
+            char dcontent[512];
+            int ci = 0;
+            while (*spc && *spc != '"' && ci < 510) dcontent[ci++] = *spc++;
+            dcontent[ci] = '\0';
+
+            if (is_write) {
+                int err = okfs_write(&g_disk_fs, dpath, (const uint8_t *)dcontent, ci);
+                if (err == OKFS_OK) log_fn("Written.");
+                else log_fn(okfs_strerror(err));
+            } else {
+                /* Append: read existing, combine, write back */
+                uint32_t existing_size = 0;
+                uint8_t *existing = okfs_read(&g_disk_fs, dpath, &existing_size);
+                uint32_t new_len = existing_size + ci;
+                uint8_t *new_data = (uint8_t *)kmalloc(new_len + 1);
+                if (!new_data) { log_fn("Out of memory"); goto skip_disk_cmd; }
+                if (existing) {
+                    for (uint32_t i = 0; i < existing_size; i++) new_data[i] = existing[i];
+                }
+                for (uint32_t i = 0; i < ci; i++) new_data[existing_size + i] = (uint8_t)dcontent[i];
+                new_data[new_len] = '\0';
+                int err = okfs_write(&g_disk_fs, dpath, new_data, new_len);
+                kfree(new_data);
+                if (existing) kfree(existing);
+                if (err == OKFS_OK) log_fn("Appended.");
+                else log_fn(okfs_strerror(err));
+            }
+        }
+skip_disk_cmd:
+        ;
         log_fn("Unknown command");
         log_fn("Type 'help' for available commands");
         return 0;
@@ -1009,6 +1127,33 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbd)
     printk("Initializing filesystem...\n");
     fs_init();
     printk("  [OK] OKFS ready\n\n");
+
+    /* ---- Block device subsystem ---- */
+    block_init();
+    printk("Initializing block devices...\n");
+
+    /* Try ATA (may fail if no drive present) */
+    ata_init();
+
+    /* Always set up a RAM disk for testing (1 MB = 2048 sectors) */
+    ramdisk_init(2048);
+
+    /* Mount OKFS on the RAM disk */
+    {
+        int err = okfs_mount(&g_disk_fs, block_find("ram0"));
+        if (err == OKFS_ERR_BAD_MAGIC) {
+            printk("  Formatting RAM disk...\n");
+            if (okfs_format(block_find("ram0"), 64) == OKFS_OK) {
+                if (okfs_mount(&g_disk_fs, block_find("ram0")) == OKFS_OK) {
+                    printk("  [OK] Disk OKFS mounted on ram0\n");
+                }
+            }
+        } else if (err == OKFS_OK) {
+            printk("  [OK] Disk OKFS mounted on ram0\n");
+        } else {
+            printk("  [--] Failed to mount RAM disk: %s\n", okfs_strerror(err));
+        }
+    }
 
     /* Enable interrupts for preemptive multitasking */
     enable_interrupts();

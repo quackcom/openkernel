@@ -1,0 +1,30 @@
+title: "[Poll] "
+labels: ["poll"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Ask your poll question here
+      placeholder: What should we prioritize?
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: List the options (one per line)
+      placeholder: |-
+        Option A
+        Option B
+        Option C
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Anything else voters should know?
+      placeholder: Background info...
+    validations:
+      required: false
