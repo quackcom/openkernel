@@ -57,11 +57,19 @@ jobs:
                 .trim();
             };
 
+            const prTitlePrefixRe = /^\[Pull Request #(\d+)\]\s*/i;
+
+            const stripPrTitlePrefix = (text) =>
+              (text || '').replace(prTitlePrefixRe, '').trim();
+
+            const getPrTitlePrefix = (title) => {
+              const m = (title || '').match(prTitlePrefixRe);
+              return m ? `[Pull Request #${m[1]}] ` : '';
+            };
+
+            /* Merge-commit subject only (never includes [Pull Request #N]). */
             const cleanSubject = (raw) =>
-              stripFlags(raw)
-                .replace(/^\[Pull Request #\d+\]\s*/i, '')
-                .replace(/\s+/g, ' ')
-                .trim();
+              stripPrTitlePrefix(stripFlags(raw)).replace(/\s+/g, ' ').trim();
 
             /* Subject from title first; if [USE_PR_TITLE] is only in Summary, use first Summary line. */
             const deriveSubject = (title, body) => {
@@ -75,10 +83,27 @@ jobs:
                 .filter((line) => line.length > 0);
 
               for (const line of lines) {
-                const oneLine = line.replace(/\s+/g, ' ').trim();
+                const oneLine = cleanSubject(line);
                 if (oneLine) return oneLine;
               }
               return '';
+            };
+
+            /* GitHub PR title: always keep existing [Pull Request #N] prefix when present. */
+            const buildPrTitle = (originalTitle, innerText) => {
+              const prefix = getPrTitlePrefix(originalTitle);
+              const inner =
+                innerText !== undefined && innerText !== null
+                  ? cleanSubject(innerText)
+                  : cleanSubject(originalTitle);
+
+              if (prefix) {
+                return inner ? `${prefix.trim()} ${inner}` : prefix.trim();
+              }
+
+              return (
+                stripFlags(originalTitle).replace(/\s+/g, ' ').trim() || inner
+              );
             };
 
             const removeFlagsFromText = (text) =>
@@ -163,9 +188,6 @@ jobs:
               return;
             }
 
-            const prPrefixMatch = title.match(/^\[Pull Request #\d+\]\s*/i);
-            const prPrefix = prPrefixMatch ? prPrefixMatch[0].trim() + ' ' : '';
-
             const subject = useTitle ? deriveSubject(title, body) : null;
             const summaryBody = useDesc ? extractSummary(body) : null;
 
@@ -221,13 +243,9 @@ jobs:
 
             let newTitle = title;
             if (stored.useTitle) {
-              newTitle = (prPrefix + stored.subject).trim();
+              newTitle = buildPrTitle(title, stored.subject);
             } else if (stored.useDesc) {
-              newTitle = removeFlagsFromText(title).replace(/\s+/g, ' ').trim();
-              const m = title.match(/^\[Pull Request #\d+\]\s*/i);
-              if (m && !/^\[Pull Request #\d+\]/i.test(newTitle)) {
-                newTitle = m[0].trim() + ' ' + newTitle;
-              }
+              newTitle = buildPrTitle(title, undefined);
             }
 
             let newBody = body;

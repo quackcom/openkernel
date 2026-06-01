@@ -152,7 +152,7 @@ Two workflows work together:
 
 | Flag | Where | Stored as |
 |------|--------|-----------|
-| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | Commit **subject** (`[Pull Request #N]` not stored) |
+| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | Commit **subject** (`[Pull Request #N]` stays on the **PR title** only; not copied into the merge commit) |
 | `[USE_PR_DESC]` | **Summary** only (not in `<!-- comments -->`) | Commit **body** (Summary text only; checklists are not stored) |
 
 After capture, the PR no longer shows the flags. Look for the bot comment **Merge commit message (saved)**. The PR summary also shows **Saved merge commit** when stored.
