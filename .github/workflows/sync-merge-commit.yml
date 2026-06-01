@@ -1,0 +1,212 @@
+# After merge: apply the merge commit message saved by capture-merge-commit-message.yml
+
+name: Sync merge commit
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Merged PR number to apply saved merge message'
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply stored merge commit message on main
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.OPENKERNEL_REPO_PAT || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const statusMarker = '<!-- sync-merge-commit-status -->';
+            const storeMarker = '<!-- openkernel-merge-commit-store';
+            const usedPat = Boolean(process.env.OPENKERNEL_REPO_PAT);
+
+            const postStatus = async (prNumber, body) => {
+              const text = statusMarker + '\n' + body;
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: prNumber,
+              });
+              const existing = comments.find(
+                (c) => c.user.type === 'Bot' && c.body && c.body.includes(statusMarker)
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: text,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: text,
+                });
+              }
+            };
+
+            const readStore = async (prNumber) => {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: prNumber,
+              });
+              const c = comments.find((x) => x.body && x.body.includes(storeMarker));
+              if (!c) return null;
+              const m = c.body.match(
+                /<!-- openkernel-merge-commit-store\s*(\{[\s\S]*?\})\s*-->/
+              );
+              if (!m) return null;
+              try {
+                return JSON.parse(m[1]);
+              } catch {
+                return null;
+              }
+            };
+
+            let prNumber;
+            if (context.eventName === 'workflow_dispatch') {
+              prNumber = Number(context.payload.inputs.pr_number);
+            } else {
+              const payloadPr = context.payload.pull_request;
+              if (!payloadPr.merged) {
+                core.info('PR closed without merge; skipping.');
+                return;
+              }
+              prNumber = payloadPr.number;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (!pr.merged) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ Skipped: PR is not merged.'
+              );
+              core.setFailed('PR is not merged.');
+              return;
+            }
+
+            const stored = await readStore(prNumber);
+            if (!stored || (!stored.useTitle && !stored.useDesc)) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ No saved merge message for this PR.\n\n' +
+                  'To save one: add `[USE_PR_TITLE]` and/or `[USE_PR_DESC]` when opening the PR ' +
+                  '(workflow **Capture merge commit message** strips flags and stores the text).'
+              );
+              return;
+            }
+
+            const mergeSha = pr.merge_commit_sha;
+            if (!mergeSha) {
+              await postStatus(prNumber, '## Merge commit sync\n\n❌ No `merge_commit_sha`.');
+              core.setFailed('No merge_commit_sha.');
+              return;
+            }
+
+            const baseRef = pr.base.ref;
+            let refSha = null;
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              const { data: ref } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+              });
+              refSha = ref.object.sha;
+              if (refSha === mergeSha) break;
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+
+            if (refSha !== mergeSha) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Merge commit is not the tip of `' +
+                  baseRef +
+                  '`. Retry **Sync merge commit** when `main` is stable.'
+              );
+              return;
+            }
+
+            const { data: commit } = await github.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: mergeSha,
+            });
+
+            const lines = commit.message.split('\n');
+            const curTitle = lines[0] || '';
+            const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
+
+            const newTitle =
+              stored.useTitle && stored.subject ? stored.subject : curTitle;
+            const newBody =
+              stored.useDesc && stored.body ? stored.body : curBody;
+            const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
+
+            if (newMessage === commit.message) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ `main` already has the saved merge commit message.'
+              );
+              return;
+            }
+
+            try {
+              const { data: newCommit } = await github.rest.git.createCommit({
+                owner,
+                repo,
+                message: newMessage,
+                tree: commit.tree.sha,
+                parents: commit.parents.map((p) => p.sha),
+              });
+
+              await github.rest.git.updateRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+                sha: newCommit.sha,
+                force: true,
+              });
+
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ Applied **saved** merge message on `' +
+                  baseRef +
+                  '`:\n\n```\n' +
+                  newMessage +
+                  '\n```\n\n' +
+                  (usedPat ? 'Used `OPENKERNEL_REPO_PAT`.' : 'Used `GITHUB_TOKEN`.') +
+                  '\n\n_GitHub’s default squash text (if any) was replaced._'
+              );
+            } catch (e) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Could not update `' +
+                  baseRef +
+                  '`: `' +
+                  e.message +
+                  '`\n\nSet secret **`OPENKERNEL_REPO_PAT`** (admin fine-grained PAT) or paste the saved message from **Merge commit message (saved)** into **Squash and merge** before confirming.'
+              );
+              core.setFailed(e.message);
+            }
+        env:
+          OPENKERNEL_REPO_PAT: ${{ secrets.OPENKERNEL_REPO_PAT }}

@@ -36,7 +36,13 @@ extern volatile int arrow_up_requested;
 extern volatile int arrow_down_requested;
 extern volatile int delete_requested;
 
-/* Set keyboard layout by ID (0=US, 1=UK, 2=IT) */
+/* Set keyboard layout by ID
+   0=US, 1=UK, 2=IT, 3=FR, 4=DE, 5=ES, 6=PT,
+   7=NO, 8=DK, 9=SE, 10=FI, 11=NL, 12=BE,
+   13=PL, 14=CZ, 15=SK, 16=HU, 17=RO, 18=TR */
 void keyboard_set_layout(int layout);
+
+/* Get a human-readable name for the current layout */
+const char* keyboard_layout_name(int layout);
 
 #endif /* KEYBOARD_H */

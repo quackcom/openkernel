@@ -44,6 +44,7 @@ int fs_edit_is_active(void);
 const char *fs_edit_path(void);
 int fs_edit_begin(const char *path);
 int fs_edit_handle_line(const char *line, void (*emit)(const char *));
+void fs_edit_display_content(void (*emit)(const char *));
 
 /* Shell: returns 1 if command was handled */
 int fs_handle_command(const char *command, void (*emit)(const char *));
