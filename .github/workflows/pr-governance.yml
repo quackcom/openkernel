@@ -79,61 +79,40 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
-            const stripHtmlComments = (text) =>
-              (text || '').replace(/<!--[\s\S]*?-->/g, '');
-
-            const extractSummaryForMerge = (body) => {
-              const visible = stripHtmlComments(body);
-              const match = visible.match(
-                /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
-              );
-              if (!match) return '';
-              return match[1]
-                .replace(/\[USE_PR_TITLE\]/gi, '')
-                .replace(/\[USE_PR_DESC\]/gi, '')
-                .split('\n')
-                .map((line) => line.trimEnd())
-                .filter((line) => line.trim().length > 0)
-                .join('\n')
-                .trim();
-            };
-
-            const cleanPrTitleForMerge = (raw) =>
-              (raw || '')
-                .replace(/\[USE_PR_TITLE\]/gi, '')
-                .replace(/\[USE_PR_DESC\]/gi, '')
-                .replace(/^\[Pull Request #\d+\]\s*/i, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-
             let mergeFlagPreview = '';
-            const prTitle = pr.title || '';
-            const prBody = pr.body || '';
-            const summaryVisible = stripHtmlComments(
-              (prBody.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+            const { data: prComments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: pr.number,
+            });
+            const storeComment = prComments.find(
+              (c) => c.body && c.body.includes('<!-- openkernel-merge-commit-store')
             );
-            const useMergeTitle =
-              /\[USE_PR_TITLE\]/i.test(prTitle) ||
-              /\[USE_PR_TITLE\]/i.test(summaryVisible);
-            const useMergeDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
-            if (useMergeTitle || useMergeDesc) {
-              mergeFlagPreview = '\n\n### Planned merge commit (from PR flags)\n\n';
-              if (useMergeTitle) {
-                mergeFlagPreview +=
-                  `**Subject:** \`${cleanPrTitleForMerge(prTitle)}\`\n\n`;
-              }
-              if (useMergeDesc) {
-                const desc = extractSummaryForMerge(prBody);
-                if (desc) {
-                  mergeFlagPreview += `**Body:**\n\`\`\`\n${desc}\n\`\`\`\n\n`;
-                } else {
-                  mergeFlagPreview +=
-                    '_`[USE_PR_DESC]` set but Summary is empty after markers._\n\n';
+            if (storeComment) {
+              const m = storeComment.body.match(
+                /<!-- openkernel-merge-commit-store\s*(\{[\s\S]*?\})\s*-->/
+              );
+              if (m) {
+                try {
+                  const stored = JSON.parse(m[1]);
+                  if (stored.useTitle || stored.useDesc) {
+                    mergeFlagPreview =
+                      '\n\n### Saved merge commit (flags already removed from this PR)\n\n';
+                    if (stored.useTitle && stored.subject) {
+                      mergeFlagPreview += `**Subject:** \`${stored.subject}\`\n\n`;
+                    }
+                    if (stored.useDesc && stored.body) {
+                      mergeFlagPreview +=
+                        `**Body:**\n\`\`\`\n${stored.body}\n\`\`\`\n\n`;
+                    }
+                    mergeFlagPreview +=
+                      'Applied on merge by **Sync merge commit** (needs `OPENKERNEL_REPO_PAT` on protected `main`). ' +
+                      'You can ignore GitHub’s default squash message when merging.\n';
+                  }
+                } catch (e) {
+                  core.info(`Could not parse merge store JSON: ${e.message}`);
                 }
               }
-              mergeFlagPreview +=
-                'After merge, workflow **Sync merge commit** applies this on `main` if secret `OPENKERNEL_REPO_PAT` is set (admin PAT). ' +
-                'Otherwise **copy** subject/body into the **Squash and merge** dialog.\n';
             }
 
             // AI-generated merge commit suggestion via NVIDIA NIM

@@ -143,14 +143,21 @@ For openkernel, prefer: **bot comments + label → human collaborator clicks Mer
 
 ### Merge commit title and description
 
-Put flags on the **PR before merging** (they are **not** kept in the final commit).
+Two workflows work together:
 
-| Flag | Where | Merge commit gets |
-|------|--------|-------------------|
-| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | **Subject** (markers and `[Pull Request #N]` removed) |
-| `[USE_PR_DESC]` | **Summary** section only (not inside `<!-- comments -->`) | **Body** = Summary text only |
+| When | Workflow | What happens |
+|------|----------|----------------|
+| PR **opened** / updated | **Capture merge commit message** | Sees `[USE_PR_TITLE]` / `[USE_PR_DESC]`, saves subject/body, **strips flags** from PR title and description |
+| PR **merged** | **Sync merge commit** | Reads the **saved** text and updates the commit on `main` (replaces GitHub’s default squash message) |
 
-The **PR governance** comment shows **Planned merge commit** while the PR is open. After merge, **Sync merge commit** tries to update `main`.
+| Flag | Where | Stored as |
+|------|--------|-----------|
+| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | Commit **subject** (`[Pull Request #N]` not stored) |
+| `[USE_PR_DESC]` | **Summary** only (not in `<!-- comments -->`) | Commit **body** (Summary text only; checklists are not stored) |
+
+After capture, the PR no longer shows the flags. Look for the bot comment **Merge commit message (saved)**. The PR summary also shows **Saved merge commit** when stored.
+
+When you click **Merge**, you can ignore or clear the default title/body in GitHub’s dialog — the saved message is what gets applied (if `OPENKERNEL_REPO_PAT` works on `main`).
 
 #### If you cannot add "GitHub Actions" to the ruleset bypass list
 
