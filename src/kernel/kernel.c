@@ -952,9 +952,9 @@ static int execute_console_command(
     } else if (kstrlen(command) >= 3 && command[0] == 'd' && command[1] == ':') {
         /* Disk command dispatcher */
         const char *sub = command + 2;
-        if (kstrlen(sub) >= 3 && streq(sub, "ls")) {
-            okfs_list(&g_disk_fs, "", log_fn);
-        } else if (kstrlen(sub) >= 4 && sub[0] == 'l' && sub[1] == 's' && sub[2] == ' ') {
+        if (kstrlen(sub) >= 4 && sub[0] == 'l' && sub[1] == 's' && sub[2] == ' ') {
+            okfs_list(&g_disk_fs, sub + 3, log_fn);
+        } else if (kstrlen(sub) >= 5 && sub[0] == 'c' && sub[1] == 'a' && sub[2] == 't' && sub[3] == ' ') {
             okfs_list(&g_disk_fs, sub + 3, log_fn);
         } else if (kstrlen(sub) >= 5 && sub[0] == 'c' && sub[1] == 'a' && sub[2] == 't' && sub[3] == ' ') {
             okfs_cat(&g_disk_fs, sub + 4, log_fn);

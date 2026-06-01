@@ -271,7 +271,8 @@ static int dirent_find(okfs_t *fs, uint32_t dir_inum, const char *name,
     return -1;
 }
 
-/* Add a directory entry to a directory's data. */
+/* Add a directory entry to a directory's data.
+   Directory data blocks are always contiguous. */
 static int dirent_add(okfs_t *fs, uint32_t dir_inum, const char *name,
                        uint32_t child_inum)
 {
@@ -280,39 +281,32 @@ static int dirent_add(okfs_t *fs, uint32_t dir_inum, const char *name,
     uint32_t dir_size = read32(inode_buf, INODE_SIZE_OFF);
     uint32_t start    = read32(inode_buf, INODE_START_OFF);
 
-    /* Calculate where the new entry goes */
     uint32_t new_size = dir_size + DIRENT_SIZE;
     uint32_t needed_blocks = (new_size + OKFS_BLOCK_SIZE - 1) / OKFS_BLOCK_SIZE;
     uint32_t current_blocks = (dir_size + OKFS_BLOCK_SIZE - 1) / OKFS_BLOCK_SIZE;
 
     if (needed_blocks > current_blocks) {
-        /* Allocate a new block */
-        uint32_t new_block;
         if (start == 0) {
-            new_block = bitmap_find(fs, 1);
-            if (new_block == 0xFFFFFFFF) return -1;
-            start = new_block;
+            /* First allocation: find 2 contiguous blocks so we have room */
+            start = bitmap_find(fs, 2);
+            if (start == 0xFFFFFFFF) return -1;
+            bitmap_set(fs, start, 1);
+            bitmap_set(fs, start + 1, 1);
+            /* Zero them out */
+            uint8_t zero[OKFS_BLOCK_SIZE];
+            for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero[i] = 0;
+            block_write(fs->dev, fs->data_start + start, zero);
+            block_write(fs->dev, fs->data_start + start + 1, zero);
         } else {
-            new_block = bitmap_find(fs, 1);
-            if (new_block == 0xFFFFFFFF) return -1;
+            /* Extend: verify the next contiguous block is free */
+            uint32_t next = start + current_blocks;
+            int used = bitmap_test(fs, next);
+            if (used) return -1;  /* Can't extend — no contiguous space */
+            bitmap_set(fs, next, 1);
+            uint8_t zero[OKFS_BLOCK_SIZE];
+            for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero[i] = 0;
+            block_write(fs->dev, fs->data_start + next, zero);
         }
-
-        /* Zero the new block */
-        uint8_t zero[OKFS_BLOCK_SIZE];
-        for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero[i] = 0;
-        block_write(fs->dev, fs->data_start + new_block, zero);
-
-        bitmap_set(fs, new_block, 1);
-
-        /* Need contiguous space won't work well for directory blocks...
-           Actually for simplicity, let's use linked blocks via "extent" concept.
-           But that's complex. Let me instead pre-allocate a fixed number of
-           directory blocks or use a simpler approach.
-
-           For now: append new block after the last one (simple contiguous grows). 
-           The next_write_cluster approach handles this. */
-        (void)needed_blocks;
-        (void)current_blocks;
     }
 
     /* Write the new entry at the end of directory data */
@@ -321,12 +315,7 @@ static int dirent_add(okfs_t *fs, uint32_t dir_inum, const char *name,
     uint32_t off = entry_byte_off % OKFS_BLOCK_SIZE;
 
     uint8_t block_buf[OKFS_BLOCK_SIZE];
-    /* Read the block if it exists and is within allocated range */
-    if (blk < start + ((dir_size + OKFS_BLOCK_SIZE - 1) / OKFS_BLOCK_SIZE)) {
-        block_read(fs->dev, fs->data_start + blk, block_buf);
-    } else {
-        for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) block_buf[i] = 0;
-    }
+    if (block_read(fs->dev, fs->data_start + blk, block_buf) != 0) return -1;
 
     write32(block_buf, off, child_inum);
     uint32_t ni = 0;
@@ -470,9 +459,18 @@ int okfs_format(block_device_t *dev, uint32_t inode_count)
         bitmap_set(&tmp_fs, b, 1);
     }
 
-    /* Create root directory inode */
+    /* Create root directory inode with 2 pre-allocated blocks */
+    uint32_t root_start = bitmap_find(&tmp_fs, 2);
+    if (root_start == 0xFFFFFFFF) return -1;
+    bitmap_set(&tmp_fs, root_start, 1);
+    bitmap_set(&tmp_fs, root_start + 1, 1);
+    uint8_t zero_block[OKFS_BLOCK_SIZE];
+    for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero_block[i] = 0;
+    block_write(dev, data_start + root_start, zero_block);
+    block_write(dev, data_start + root_start + 1, zero_block);
+
     uint8_t root_inode[INODE_SIZE];
-    inode_encode(root_inode, "", 0, 0, OKFS_TYPE_DIR);
+    inode_encode(root_inode, "", 0, root_start, OKFS_TYPE_DIR);
     if (inode_write(&tmp_fs, 0, root_inode) != 0) return -1;
 
     return OKFS_OK;
@@ -525,7 +523,20 @@ int okfs_create(okfs_t *fs, const char *path, int type)
 
     /* Write inode */
     uint8_t buf[INODE_SIZE];
-    inode_encode(buf, leaf, 0, 0, (uint8_t)type);
+    if (type == OKFS_TYPE_DIR) {
+        /* Pre-allocate 2 blocks for the new directory */
+        uint32_t dir_start = bitmap_find(fs, 2);
+        if (dir_start == 0xFFFFFFFF) return OKFS_ERR_NO_SPACE;
+        bitmap_set(fs, dir_start, 1);
+        bitmap_set(fs, dir_start + 1, 1);
+        uint8_t zero[OKFS_BLOCK_SIZE];
+        for (uint32_t z = 0; z < OKFS_BLOCK_SIZE; z++) zero[z] = 0;
+        block_write(fs->dev, fs->data_start + dir_start, zero);
+        block_write(fs->dev, fs->data_start + dir_start + 1, zero);
+        inode_encode(buf, leaf, 0, dir_start, (uint8_t)type);
+    } else {
+        inode_encode(buf, leaf, 0, 0, (uint8_t)type);
+    }
     if (inode_write(fs, inum, buf) != 0) return OKFS_ERR_IO;
 
     /* Add directory entry to parent */
