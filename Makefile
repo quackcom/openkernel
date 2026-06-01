@@ -187,7 +187,7 @@ DISK_IMG = $(BUILD_DIR)/disk.img
 
 run: $(KERNEL_ELF) $(DISK_IMG)
 	@echo "Starting QEMU..."
-	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it -drive file=$(DISK_IMG),format=raw
+	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -drive file=$(DISK_IMG),format=raw
 
 # Create an empty disk image (32 MB, raw format)
 $(DISK_IMG): | $(BUILD_DIR)
@@ -202,7 +202,7 @@ $(DISK_IMG): | $(BUILD_DIR)
 # Run without disk image (RAM disk only)
 run-nodisk: $(KERNEL_ELF)
 	@echo "Starting QEMU (no disk)..."
-	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it
+	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std
 
 # Create floppy image (1.44 MB)
 FLOPPY_IMG = $(BUILD_DIR)/floppy.img
@@ -214,7 +214,7 @@ floppy-img: $(KERNEL_ELF)
 # Run with floppy
 run-floppy: $(KERNEL_ELF) $(FLOPPY_IMG)
 	@echo "Starting QEMU with floppy..."
-	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -k it -drive file=$(FLOPPY_IMG),format=raw,if=floppy
+	qemu-system-i386 -machine pc -kernel build/kernel.elf -m 256M -vga std -drive file=$(FLOPPY_IMG),format=raw,if=floppy
 
 # Run with ISO (requires GRUB)
 run-iso: iso

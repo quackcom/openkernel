@@ -292,16 +292,19 @@ static int dirent_add(okfs_t *fs, uint32_t dir_inum, const char *name,
             if (start == 0xFFFFFFFF) return -1;
             bitmap_set(fs, start, 1);
             bitmap_set(fs, start + 1, 1);
-            /* Zero them out */
             uint8_t zero[OKFS_BLOCK_SIZE];
             for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero[i] = 0;
             block_write(fs->dev, fs->data_start + start, zero);
             block_write(fs->dev, fs->data_start + start + 1, zero);
+        } else if (current_blocks == 0) {
+            /* Pre-allocated blocks exist (e.g. from okfs_create) but
+               current_blocks is 0 since dir_size was 0. We already have
+               the blocks we need — just use them. */
         } else {
             /* Extend: verify the next contiguous block is free */
             uint32_t next = start + current_blocks;
             int used = bitmap_test(fs, next);
-            if (used) return -1;  /* Can't extend — no contiguous space */
+            if (used) return -1;
             bitmap_set(fs, next, 1);
             uint8_t zero[OKFS_BLOCK_SIZE];
             for (uint32_t i = 0; i < OKFS_BLOCK_SIZE; i++) zero[i] = 0;

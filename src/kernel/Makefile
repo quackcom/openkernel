@@ -146,7 +146,7 @@ iso: $(KERNEL_ELF)
 # Run with QEMU
 run: $(KERNEL_ELF)
 	@echo "Starting QEMU..."
-	qemu-system-i386 -machine pc -device i8042 -kernel build/kernel.elf -m 256M -vga std -k it
+	qemu-system-i386 -machine pc -device i8042 -kernel build/kernel.elf -m 256M -vga std
 
 # Run with ISO (requires GRUB)
 run-iso: iso
