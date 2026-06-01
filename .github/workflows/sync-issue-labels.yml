@@ -1,4 +1,4 @@
-# Ensures issue template labels exist on the repo with exact names from .github/issue-labels.json
+# Ensures issue + discussion template labels exist on the repo with exact names from .github/issue-labels.json
 # (feature-request, wiki-suggestion, bug). Label names are case-sensitive and must match workflows.
 
 name: Sync issue labels

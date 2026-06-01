@@ -29,6 +29,15 @@ static char *edit_buf = NULL;
 static size_t edit_len = 0;
 static size_t edit_cap = 0;
 
+/* Pending line: populated by ":e <n>" (no text) so the shell can
+   pre-fill the command buffer with the current line content. */
+static char edit_pending_line[FS_MAX_PATH];
+static int edit_pending_line_valid = 0;
+
+/* When ":e <n>" (no text) loads a line, this tracks which line to
+   replace when the user types the next non-command line. */
+static int edit_target_line = 0;
+
 static size_t fs_strlen(const char *s)
 {
     size_t n = 0;
@@ -550,7 +559,12 @@ static void edit_buf_free(void)
     edit_buf = NULL;
     edit_len = 0;
     edit_cap = 0;
+    edit_pending_line_valid = 0;
+    edit_target_line = 0;
 }
+
+/* Forward declaration */
+static int edit_fetch_line(int n, char *out, size_t max);
 
 int fs_edit_is_active(void)
 {
@@ -567,12 +581,7 @@ int fs_edit_begin(const char *path)
     if (edit_active) return FS_ERR_INVALID;
 
     int id = fs_resolve(cwd, path, 0);
-    if (id < 0) {
-        int err = fs_touch(path);
-        if (err != FS_OK) return err;
-        id = fs_resolve(cwd, path, 0);
-        if (id < 0) return id;
-    }
+    if (id < 0) return id;  /* file not found — don't auto-create */
 
     if (nodes[id].type != FS_TYPE_FILE) return FS_ERR_NOT_FILE;
     if (!fs_ends_with_txt(nodes[id].name)) return FS_ERR_NOT_TXT;
@@ -595,6 +604,33 @@ int fs_edit_begin(const char *path)
 int fs_edit_handle_line(const char *line, void (*emit)(const char *))
 {
     if (!edit_active) return FS_ERR_INVALID;
+
+    /* If a target line was set by ":e <n>" and this line is not a
+       command, treat it as an inline replacement of that line. */
+    if (edit_target_line > 0) {
+        if (line[0] != ':') {
+            int target = edit_target_line;
+            edit_target_line = 0;
+            /* Build a synthetic ":e <n> <text>" command */
+            char syn[FS_CMD_TEXT_MAX];
+            size_t sp = 0;
+            char prefix[16];
+            int pi = 0;
+            prefix[pi++] = ':'; prefix[pi++] = 'e'; prefix[pi++] = ' ';
+            int n = target;
+            int rev[8], ri = 0;
+            do { rev[ri++] = n % 10; n /= 10; } while (n > 0);
+            while (ri > 0) prefix[pi++] = '0' + rev[--ri];
+            prefix[pi++] = ' ';
+            prefix[pi] = '\0';
+            for (int i = 0; prefix[i] && sp < sizeof(syn) - 2; i++) syn[sp++] = prefix[i];
+            for (int i = 0; line[i] && sp < sizeof(syn) - 2; i++) syn[sp++] = line[i];
+            syn[sp] = '\0';
+            return fs_edit_handle_line(syn, emit);
+        }
+        /* Command typed → cancel target */
+        edit_target_line = 0;
+    }
 
     if (fs_streq(line, ":save") || fs_streq(line, ":w")) {
         int err = fs_write_file(edit_path, edit_buf, edit_len);
@@ -652,8 +688,6 @@ int fs_edit_handle_line(const char *line, void (*emit)(const char *))
         int ln = 0;
         const char *p = line + 3;
         while (*p >= '0' && *p <= '9') { ln = ln * 10 + (*p - '0'); p++; }
-        if (*p != ' ') { emit("Usage: :e <n> <text>"); return FS_ERR_INVALID; }
-        p++;
         int idx = ln - 1;
         if (idx < 0) { emit("Invalid line number"); return FS_ERR_INVALID; }
         if (edit_len == 0) { emit("File is empty"); return FS_ERR_INVALID; }
@@ -661,6 +695,18 @@ int fs_edit_handle_line(const char *line, void (*emit)(const char *))
         for (size_t i = 0; i < edit_len; i++) { if (edit_buf[i] == '\n') total++; }
         if (edit_buf[edit_len - 1] != '\n') total++;
         if (idx >= total) { emit("Line number out of range"); return FS_ERR_INVALID; }
+
+        /* :e <n> without text — fetch current line content into pending buffer */
+        if (*p == '\0') {
+            if (edit_fetch_line(ln, edit_pending_line, FS_MAX_PATH) == 0) {
+                edit_pending_line_valid = 1;
+                edit_target_line = ln;
+            }
+            return FS_OK;
+        }
+
+        if (*p != ' ') { emit("Usage: :e <n> [text]"); return FS_ERR_INVALID; }
+        p++;
 
         char *old = edit_buf;
         size_t old_len = edit_len;
@@ -732,6 +778,35 @@ void fs_edit_display_content(void (*emit)(const char *))
     }
 }
 
+const char *fs_edit_get_pending_line(void)
+{
+    if (edit_pending_line_valid) {
+        edit_pending_line_valid = 0;
+        return edit_pending_line;
+    }
+    return NULL;
+}
+
+/* Copy the content of line n (1-indexed) from edit_buf into out (max max chars).
+   Returns 0 on success, -1 if line n doesn't exist. */
+static int edit_fetch_line(int n, char *out, size_t max)
+{
+    if (edit_len == 0 || n < 1) return -1;
+    int cur = 1;
+    size_t pos = 0;
+    while (pos < edit_len && cur < n) {
+        if (edit_buf[pos] == '\n') cur++;
+        pos++;
+    }
+    if (cur != n || pos >= edit_len) return -1;
+    size_t oi = 0;
+    while (pos < edit_len && edit_buf[pos] != '\n' && oi < max - 1) {
+        out[oi++] = edit_buf[pos++];
+    }
+    out[oi] = '\0';
+    return 0;
+}
+
 /* ---- Shell command parsing ---- */
 
 static void skip_spaces(const char **p)
@@ -786,7 +861,7 @@ static void emit_err(void (*emit)(const char *), int err)
 void fs_show_help(void (*emit)(const char *))
 {
     emit("Filesystem commands:");
-    emit("ls [path]              - List directory");
+    emit("ls <path>              - List directory");
     emit("cd <path>              - Change directory");
     emit("pwd                    - Print working directory");
     emit("mkdir <path>           - Create directory");
@@ -795,7 +870,7 @@ void fs_show_help(void (*emit)(const char *))
     emit("cat <file.txt>         - Print file contents");
     emit("write <file.txt> \"t\"  - Create/overwrite text file");
     emit("append <file.txt> \"t\" - Append text to file");
-    emit("edit <file.txt>        - Line editor (:save / :q)");
+    emit("edit <file.txt>        - Edit existing .txt file");
 }
 
 int fs_handle_command(const char *command, void (*emit)(const char *))
@@ -812,13 +887,15 @@ int fs_handle_command(const char *command, void (*emit)(const char *))
     char path[FS_MAX_PATH];
     char rest[FS_CMD_TEXT_MAX];
 
-    if (fs_streq(command, "ls") || fs_streq(command, "dir")) {
-        int err = fs_ls(NULL, emit);
+    if (fs_strncmp(command, "ls ", 3) == 0) {
+        const char *arg = command + 3;
+        skip_spaces(&arg);
+        int err = fs_ls(arg, emit);
         if (err != FS_OK) emit_err(emit, err);
         return 1;
     }
-    if (fs_strncmp(command, "ls ", 3) == 0) {
-        const char *arg = command + 3;
+    if (fs_strncmp(command, "dir ", 4) == 0) {
+        const char *arg = command + 4;
         skip_spaces(&arg);
         int err = fs_ls(arg, emit);
         if (err != FS_OK) emit_err(emit, err);
@@ -877,7 +954,7 @@ int fs_handle_command(const char *command, void (*emit)(const char *))
         if (err != FS_OK) {
             emit_err(emit, err);
         } else {
-            emit("Edit mode. Type lines, then :save or :q");
+            emit("Edit mode. Commands: :save/:w, :q, :p, :e <n> [text], :e <n> (load line)");
             emit(fs_edit_path());
         }
         return 1;

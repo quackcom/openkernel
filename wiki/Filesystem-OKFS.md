@@ -73,8 +73,31 @@ Each entry is a `fs_node_t`:
 ## Editor internals
 
 `fs_edit_begin()` loads file into `edit_buf` (kmalloc).  
-Each line in edit mode appends text + newline.  
-`:save` calls `fs_write_file()` with buffer contents.
+Each line typed in edit mode is appended with a newline, unless it starts with `:` (a command).  
+
+| Editor command | Action |
+|----------------|--------|
+| `:save` / `:w` | Writes buffer via `fs_write_file()`, exits edit mode |
+| `:q` / `:quit` | Discards buffer, exits edit mode |
+| `:p` | Prints buffer with `N:content` line numbers |
+| `:e <n> <text>` | Replaces line N with `<text>` |
+| `:e <n>` | Loads line N into the command buffer for interactive editing |
+
+### Inline line editing flow
+
+`:e <n>` (no text) copies line N into a pending buffer. The shell picks it up and fills the command line, so you can edit it. Pressing Enter replaces the original line N — no need to retype the whole thing.
+
+```text
+edit:myfile.txt> :p
+1:First line
+2:Second line — needs fixing
+edit:myfile.txt> :e 2
+edit:myfile.txt> Second line — fixed!
+edit:myfile.txt> :save
+Saved.
+```
+
+The replacement uses a **target line** tracker: after `:e <n>`, the next non-command line is treated as the replacement for line N. Typing any command (`:` prefix) cancels the target.
 
 ## Example session
 
@@ -95,9 +118,14 @@ openkernel educational filesystem.
 Written.
 
 > edit notes.txt
-Edit mode. Type lines, then :save or :q
+Edit mode. Commands: :save/:w, :q, :p, :e <n> [text], :e <n> (load line)
 notes.txt
 > Second line
+> :p
+1:First line of my note
+2:Second line
+> :e 1
+> First line — edited!
 > :save
 Saved.
 ```

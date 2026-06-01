@@ -141,54 +141,7 @@ Recommended: keep **branch protection** (at least 1 approval) **and** use the wo
 
 For openkernel, prefer: **bot comments + label → human collaborator clicks Merge**.
 
-### Merge commit title and description
-
-Two workflows work together:
-
-| When | Workflow | What happens |
-|------|----------|----------------|
-| PR **opened** / updated | **Capture merge commit message** | Sees `[USE_PR_TITLE]` / `[USE_PR_DESC]`, saves subject/body, **strips flags** from PR title and description |
-| PR **merged** | **Sync merge commit** | Reads the **saved** text and updates the commit on `main` (replaces GitHub’s default squash message) |
-
-| Flag | Where | Stored as |
-|------|--------|-----------|
-| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | Commit **subject** (`[Pull Request #N]` stays on the **PR title** only; not copied into the merge commit) |
-| `[USE_PR_DESC]` | **Summary** only (not in `<!-- comments -->`) | Commit **body** (Summary text only; checklists are not stored) |
-
-After capture, the PR no longer shows the flags. Look for the bot comment **Merge commit message (saved)**. The PR summary also shows **Saved merge commit** when stored.
-
-When you click **Merge**, you can ignore or clear the default title/body in GitHub’s dialog — the saved message is what gets applied (if `OPENKERNEL_REPO_PAT` works on `main`).
-
-#### If you cannot add "GitHub Actions" to the ruleset bypass list
-
-`GITHUB_TOKEN` often cannot push to protected `main`. Use one of these:
-
-| Option | What to do |
-|--------|------------|
-| **A. Admin PAT (recommended for automation)** | 1. [Fine-grained PAT](https://github.com/settings/personal-access-tokens/new): **Repository access** = only `quackcom/openkernel` (required — “All repositories” also works).<br>2. **Repository permissions** → **Contents: Read and write** (Metadata: Read is automatic).<br>3. Token owner = your admin user; ruleset **Bypass list** → **Repository admins** (your user — **not** the GitHub Actions app).<br>4. Repo **Settings → Secrets → Actions** → `OPENKERNEL_REPO_PAT` = that token.<br>5. After merge, **Sync merge commit** rewrites `main`; or re-run with the PR number. |
-| **B. Manual merge dialog** | On **Squash and merge**, edit the message and paste **Subject** / **Body** from **Merge commit message (saved)** on the PR. No PAT, no bypass for Actions. |
-
-You do **not** need to add the **GitHub Actions** app to bypass if you use **A** or **B**.
-
-#### Auto-renamer + merge flags (troubleshooting)
-
-Three workflows interact on every PR:
-
-| Workflow | When | Role |
-|----------|------|------|
-| **Assign pull request number** | PR opened | Adds `[Pull Request #N]` to the **PR title** |
-| **Capture merge commit message** | PR open/update (and after assign finishes) | Strips `[USE_PR_TITLE]` / `[USE_PR_DESC]`, saves merge text |
-| **Sync merge commit** | PR merged | Rewrites the commit on `main` |
-
-| Symptom | Likely cause | Fix |
-|---------|----------------|-----|
-| Flags never removed; no **Merge commit message (saved)** comment | **Capture** / **Sync** workflows not on `main` yet | Merge the governance branch so both YAML files exist on `main` |
-| `[Pull Request #N]` missing after capture | Race on open (fixed in repo: capture re-fetches title before update) | Push latest workflows; re-run **Capture merge commit message** from **Actions** |
-| Saved message OK but `main` still has default squash text | Protected `main`; no PAT | Add repo secret `OPENKERNEL_REPO_PAT` (admin PAT with **Contents: write**, owner on ruleset **Bypass list**), or paste from the bot comment into **Squash and merge** |
-| **`Resource not accessible by personal access token`** on [Sync merge commit](https://github.com/quackcom/openkernel/actions/workflows/sync-merge-commit.yml) | `OPENKERNEL_REPO_PAT` cannot access this repo (wrong scope, repo not selected, or expired token) | Regenerate PAT with **only** `openkernel` + **Contents: Read and write**; update the secret; re-run the workflow. Or remove the secret and use manual squash paste (option **B**) |
-| **Sync merge commit** skipped / “not tip of main” | Another push landed on `main` right after merge | Wait for `main` to settle; **Actions → Sync merge commit → Run workflow** with the PR number |
-
-Put flags in the **visible** PR title and **## Summary** (not only inside `<!-- HTML comments -->`).
+When merging, edit the squash/merge message in GitHub’s dialog if you want a custom commit title or body on `main`.
 
 ## Assigning PRs to people
 
