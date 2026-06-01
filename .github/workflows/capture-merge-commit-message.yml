@@ -33,15 +33,23 @@ jobs:
             const stripHtmlComments = (text) =>
               (text || '').replace(/<!--[\s\S]*?-->/g, '');
 
-            const extractSummary = (body) => {
+            const getSummarySection = (body) => {
               const visible = stripHtmlComments(body);
               const match = visible.match(
                 /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
               );
-              if (!match) return '';
-              return match[1]
+              return match ? match[1] : '';
+            };
+
+            const stripFlags = (text) =>
+              (text || '')
                 .replace(/\[USE_PR_TITLE\]/gi, '')
-                .replace(/\[USE_PR_DESC\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '');
+
+            const extractSummary = (body) => {
+              const section = getSummarySection(body);
+              if (!section) return '';
+              return stripFlags(section)
                 .split('\n')
                 .map((line) => line.trimEnd())
                 .filter((line) => line.trim().length > 0)
@@ -50,12 +58,28 @@ jobs:
             };
 
             const cleanSubject = (raw) =>
-              (raw || '')
-                .replace(/\[USE_PR_TITLE\]/gi, '')
-                .replace(/\[USE_PR_DESC\]/gi, '')
+              stripFlags(raw)
                 .replace(/^\[Pull Request #\d+\]\s*/i, '')
                 .replace(/\s+/g, ' ')
                 .trim();
+
+            /* Subject from title first; if [USE_PR_TITLE] is only in Summary, use first Summary line. */
+            const deriveSubject = (title, body) => {
+              const fromTitle = cleanSubject(title);
+              if (fromTitle) return fromTitle;
+
+              const section = stripFlags(getSummarySection(body));
+              const lines = section
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+              for (const line of lines) {
+                const oneLine = line.replace(/\s+/g, ' ').trim();
+                if (oneLine) return oneLine;
+              }
+              return '';
+            };
 
             const removeFlagsFromText = (text) =>
               (text || '')
@@ -114,12 +138,7 @@ jobs:
 
             const title = pr.title || '';
             const body = pr.body || '';
-            const summaryVisible = stripHtmlComments(
-              (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || [
-                '',
-                '',
-              ])[1]
-            );
+            const summaryVisible = getSummarySection(body);
 
             const useTitle =
               /\[USE_PR_TITLE\]/i.test(title) ||
@@ -147,30 +166,63 @@ jobs:
             const prPrefixMatch = title.match(/^\[Pull Request #\d+\]\s*/i);
             const prPrefix = prPrefixMatch ? prPrefixMatch[0].trim() + ' ' : '';
 
+            const subject = useTitle ? deriveSubject(title, body) : null;
+            const summaryBody = useDesc ? extractSummary(body) : null;
+
             const stored = {
               version: 1,
-              useTitle: !!useTitle,
-              useDesc: !!useDesc,
-              subject: useTitle ? cleanSubject(title) : null,
-              body: useDesc ? extractSummary(body) : null,
+              useTitle: useTitle && !!subject,
+              useDesc: useDesc && !!summaryBody,
+              subject: subject || null,
+              body: summaryBody || null,
               capturedAt: new Date().toISOString(),
             };
 
+            const missing = [];
             if (useTitle && !stored.subject) {
-              core.setFailed('[USE_PR_TITLE] would produce an empty commit subject.');
-              return;
+              missing.push(
+                '`[USE_PR_TITLE]`: add real text to the PR title or the first line of **Summary** (not the flag alone).'
+              );
             }
             if (useDesc && !stored.body) {
-              core.setFailed(
-                '[USE_PR_DESC] is set but the Summary section is empty after removing markers.'
+              missing.push(
+                '`[USE_PR_DESC]`: add text under **Summary** besides the flag (placeholders like "Write your summary here" count).'
+              );
+            }
+
+            if (!stored.subject && !stored.body) {
+              const warn =
+                '## Merge commit message (not saved)\n\n' +
+                'Flags were **not** removed because nothing usable would be stored:\n\n' +
+                missing.map((m) => `- ${m}`).join('\n') +
+                '\n\n_Update the PR and push or re-open; this workflow runs again on sync._';
+              if (commentId && existingStore) {
+                await writeStoreComment(commentId, existingStore, warn);
+              } else if (commentId) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: commentId,
+                  body: warn,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: warn,
+                });
+              }
+              core.warning(
+                'After removing flags, nothing is left to capture: ' + missing.join(' ')
               );
               return;
             }
 
             let newTitle = title;
-            if (useTitle) {
+            if (stored.useTitle) {
               newTitle = (prPrefix + stored.subject).trim();
-            } else {
+            } else if (stored.useDesc) {
               newTitle = removeFlagsFromText(title).replace(/\s+/g, ' ').trim();
               const m = title.match(/^\[Pull Request #\d+\]\s*/i);
               if (m && !/^\[Pull Request #\d+\]/i.test(newTitle)) {
@@ -178,7 +230,12 @@ jobs:
               }
             }
 
-            let newBody = removeFlagsFromText(body);
+            let newBody = body;
+            if (stored.useDesc) {
+              newBody = removeFlagsFromText(newBody);
+            } else if (stored.useTitle) {
+              newBody = stripFlags(newBody);
+            }
 
             const updates = {};
             if (newTitle !== title) updates.title = newTitle;
@@ -195,8 +252,15 @@ jobs:
             }
 
             let human = '## Merge commit message (saved)\n\n';
-            human +=
-              'Flags were removed from this PR. On merge, **Sync merge commit** will apply:\n\n';
+            if (missing.length > 0) {
+              human +=
+                '**Note:** Some flags could not be captured yet:\n\n' +
+                missing.map((m) => `- ${m}`).join('\n') +
+                '\n\n';
+            } else {
+              human +=
+                'Flags were removed from this PR. On merge, **Sync merge commit** will apply:\n\n';
+            }
             if (stored.useTitle && stored.subject) {
               human += `**Subject:** \`${stored.subject}\`\n\n`;
             }
@@ -205,6 +269,12 @@ jobs:
             }
             human +=
               '_When you click **Merge**, ignore or clear GitHub’s default squash message — the saved text above is what gets written to `main` (if `OPENKERNEL_REPO_PAT` is set or you paste manually)._';
+
+            if (missing.length > 0) {
+              core.warning(
+                'Partial capture; fix remaining flags: ' + missing.join(' ')
+              );
+            }
 
             await writeStoreComment(commentId, stored, human);
             core.info('Stored merge commit message for post-merge sync.');

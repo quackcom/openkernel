@@ -617,6 +617,77 @@ int fs_edit_handle_line(const char *line, void (*emit)(const char *))
         return FS_OK;
     }
 
+    if (fs_streq(line, ":p")) {
+        if (edit_len == 0) {
+            emit("(empty)");
+        } else {
+            int n = 1;
+            char buf[81];
+            size_t bp = 0;
+            for (size_t i = 0; i < edit_len; i++) {
+                char c = edit_buf[i];
+                if (c == '\n') {
+                    buf[bp] = '\0';
+                    char num[8];
+                    int ni = 0, v = n;
+                    do { num[ni++] = '0' + (v % 10); v /= 10; } while (v > 0);
+                    char out[96];
+                    int oi = 0;
+                    while (ni > 0) out[oi++] = num[--ni];
+                    out[oi++] = ':'; out[oi++] = ' ';
+                    for (int j = 0; buf[j] && oi < 94; j++) out[oi++] = buf[j];
+                    out[oi] = '\0';
+                    emit(out);
+                    n++;
+                    bp = 0;
+                } else {
+                    if (bp < 80) buf[bp++] = c;
+                }
+            }
+        }
+        return FS_OK;
+    }
+
+    if (line[0] == ':' && line[1] == 'e' && line[2] == ' ') {
+        int ln = 0;
+        const char *p = line + 3;
+        while (*p >= '0' && *p <= '9') { ln = ln * 10 + (*p - '0'); p++; }
+        if (*p != ' ') { emit("Usage: :e <n> <text>"); return FS_ERR_INVALID; }
+        p++;
+        int idx = ln - 1;
+        if (idx < 0) { emit("Invalid line number"); return FS_ERR_INVALID; }
+        if (edit_len == 0) { emit("File is empty"); return FS_ERR_INVALID; }
+        int total = 0;
+        for (size_t i = 0; i < edit_len; i++) { if (edit_buf[i] == '\n') total++; }
+        if (edit_buf[edit_len - 1] != '\n') total++;
+        if (idx >= total) { emit("Line number out of range"); return FS_ERR_INVALID; }
+
+        char *old = edit_buf;
+        size_t old_len = edit_len;
+        edit_buf = NULL; edit_len = 0; edit_cap = 0;
+
+        int cur = 0;
+        size_t pos = 0;
+        while (pos < old_len) {
+            size_t start = pos;
+            while (pos < old_len && old[pos] != '\n') pos++;
+            if (cur == idx) {
+                edit_buf_append(p, fs_strlen(p));
+            } else {
+                edit_buf_append(&old[start], pos - start);
+            }
+            if (pos < old_len && old[pos] == '\n') {
+                edit_buf_append("\n", 1);
+                pos++;
+            }
+            cur++;
+        }
+
+        kfree(old);
+        emit("Line updated.");
+        return FS_OK;
+    }
+
     int err = edit_buf_append(line, fs_strlen(line));
     if (err != FS_OK) {
         emit(fs_strerror(err));
@@ -625,6 +696,40 @@ int fs_edit_handle_line(const char *line, void (*emit)(const char *))
     err = edit_buf_append("\n", 1);
     if (err != FS_OK) emit(fs_strerror(err));
     return err;
+}
+
+void fs_edit_display_content(void (*emit)(const char *))
+{
+    char line[81];
+    size_t lp = 0;
+
+    if (!edit_active || !emit) return;
+
+    if (edit_len == 0) {
+        emit("(empty file)");
+        return;
+    }
+
+    emit("--- file ---");
+    for (size_t i = 0; i < edit_len; i++) {
+        char c = edit_buf[i];
+        if (c == '\n') {
+            line[lp] = '\0';
+            emit(line);
+            lp = 0;
+        } else {
+            if (lp >= 80) {
+                line[lp] = '\0';
+                emit(line);
+                lp = 0;
+            }
+            line[lp++] = c;
+        }
+    }
+    if (lp > 0) {
+        line[lp] = '\0';
+        emit(line);
+    }
 }
 
 /* ---- Shell command parsing ---- */
