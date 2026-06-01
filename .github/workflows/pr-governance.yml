@@ -77,42 +77,6 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
-            let mergeFlagPreview = '';
-            const { data: prComments } = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number: pr.number,
-            });
-            const storeComment = prComments.find(
-              (c) => c.body && c.body.includes('<!-- openkernel-merge-commit-store')
-            );
-            if (storeComment) {
-              const m = storeComment.body.match(
-                /<!-- openkernel-merge-commit-store\s*(\{[\s\S]*?\})\s*-->/
-              );
-              if (m) {
-                try {
-                  const stored = JSON.parse(m[1]);
-                  if (stored.useTitle || stored.useDesc) {
-                    mergeFlagPreview =
-                      '\n\n### Saved merge commit (flags already removed from this PR)\n\n';
-                    if (stored.useTitle && stored.subject) {
-                      mergeFlagPreview += `**Subject:** \`${stored.subject}\`\n\n`;
-                    }
-                    if (stored.useDesc && stored.body) {
-                      mergeFlagPreview +=
-                        `**Body:**\n\`\`\`\n${stored.body}\n\`\`\`\n\n`;
-                    }
-                    mergeFlagPreview +=
-                      'Applied on merge by **Sync merge commit** (needs `OPENKERNEL_REPO_PAT` on protected `main`). ' +
-                      'You can ignore GitHub’s default squash message when merging.\n';
-                  }
-                } catch (e) {
-                  core.info(`Could not parse merge store JSON: ${e.message}`);
-                }
-              }
-            }
-
             const body =
               `## PR summary (automated)\n\n` +
               `| Metric | Value |\n|--------|-------|\n` +
@@ -121,7 +85,6 @@ jobs:
               `| Author | @${pr.user.login} |\n\n` +
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
-              mergeFlagPreview +
               `\n\n---\n` +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +
               `Automation does not replace human review for kernel changes._`;
