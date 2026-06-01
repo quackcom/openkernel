@@ -1,4 +1,5 @@
 # After merge: apply the merge commit message saved by capture-merge-commit-message.yml
+# Comments use GITHUB_TOKEN (github-actions[bot]). PAT is only for rewriting main.
 
 name: Sync merge commit
 
@@ -21,16 +22,15 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Apply stored merge commit message on main
+      - name: Read saved message and post status (Actions bot)
+        id: prepare
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.OPENKERNEL_REPO_PAT || github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const statusMarker = '<!-- sync-merge-commit-status -->';
             const storeMarker = '<!-- openkernel-merge-commit-store';
-            const usedPat = Boolean(process.env.OPENKERNEL_REPO_PAT);
 
             const postStatus = async (prNumber, body) => {
               const text = statusMarker + '\n' + body;
@@ -170,43 +170,131 @@ jobs:
               return;
             }
 
+            const rewrite = {
+              prNumber,
+              baseRef,
+              newMessage,
+              treeSha: commit.tree.sha,
+              parentShas: commit.parents.map((p) => p.sha),
+            };
+            core.setOutput('rewrite_b64', Buffer.from(JSON.stringify(rewrite)).toString('base64'));
+
+      - name: Rewrite merge commit on main (PAT or GITHUB_TOKEN)
+        id: rewrite
+        if: steps.prepare.outputs.rewrite_b64 != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.OPENKERNEL_REPO_PAT || github.token }}
+          script: |
+            const rewrite = JSON.parse(
+              Buffer.from('${{ steps.prepare.outputs.rewrite_b64 }}', 'base64').toString('utf8')
+            );
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const usedPat = Boolean(process.env.OPENKERNEL_REPO_PAT);
+
             try {
               const { data: newCommit } = await github.rest.git.createCommit({
                 owner,
                 repo,
-                message: newMessage,
-                tree: commit.tree.sha,
-                parents: commit.parents.map((p) => p.sha),
+                message: rewrite.newMessage,
+                tree: rewrite.treeSha,
+                parents: rewrite.parentShas,
               });
 
               await github.rest.git.updateRef({
                 owner,
                 repo,
-                ref: `heads/${baseRef}`,
+                ref: `heads/${rewrite.baseRef}`,
                 sha: newCommit.sha,
                 force: true,
               });
 
-              await postStatus(
-                prNumber,
-                '## Merge commit sync\n\n✅ Applied **saved** merge message on `' +
-                  baseRef +
-                  '`:\n\n```\n' +
-                  newMessage +
-                  '\n```\n\n' +
-                  (usedPat ? 'Used `OPENKERNEL_REPO_PAT`.' : 'Used `GITHUB_TOKEN`.') +
-                  '\n\n_GitHub’s default squash text (if any) was replaced._'
+              core.setOutput('ok', 'true');
+              core.setOutput('used_pat', usedPat ? 'true' : 'false');
+              core.setOutput('pr_number', String(rewrite.prNumber));
+              core.setOutput('base_ref', rewrite.baseRef);
+              core.setOutput(
+                'new_message_b64',
+                Buffer.from(rewrite.newMessage, 'utf8').toString('base64')
               );
             } catch (e) {
-              await postStatus(
-                prNumber,
-                '## Merge commit sync\n\n❌ Could not update `' +
-                  baseRef +
-                  '`: `' +
-                  e.message +
-                  '`\n\nSet secret **`OPENKERNEL_REPO_PAT`** (admin fine-grained PAT) or paste the saved message from **Merge commit message (saved)** into **Squash and merge** before confirming.'
+              core.setOutput('ok', 'false');
+              core.setOutput('pr_number', String(rewrite.prNumber));
+              core.setOutput('base_ref', rewrite.baseRef);
+              core.setOutput(
+                'error_b64',
+                Buffer.from(String(e.message), 'utf8').toString('base64')
               );
               core.setFailed(e.message);
             }
         env:
           OPENKERNEL_REPO_PAT: ${{ secrets.OPENKERNEL_REPO_PAT }}
+
+      - name: Post rewrite result (Actions bot)
+        if: steps.rewrite.outcome != 'skipped'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const statusMarker = '<!-- sync-merge-commit-status -->';
+            const prNumber = Number('${{ steps.rewrite.outputs.pr_number }}');
+            const baseRef = '${{ steps.rewrite.outputs.base_ref }}';
+
+            let body;
+            if ('${{ steps.rewrite.outputs.ok }}' === 'true') {
+              const usedPat = '${{ steps.rewrite.outputs.used_pat }}' === 'true';
+              const newMessage = Buffer.from(
+                '${{ steps.rewrite.outputs.new_message_b64 }}',
+                'base64'
+              ).toString('utf8');
+              body =
+                '## Merge commit sync\n\n✅ Applied **saved** merge message on `' +
+                baseRef +
+                '`:\n\n```\n' +
+                newMessage +
+                '\n```\n\n' +
+                (usedPat
+                  ? 'Branch updated with `OPENKERNEL_REPO_PAT` (git only).'
+                  : 'Branch updated with `GITHUB_TOKEN`.') +
+                '\n\n_Comments on this PR use **github-actions[bot]**._\n\n' +
+                '_GitHub’s default squash text (if any) was replaced._';
+            } else {
+              const err = Buffer.from(
+                '${{ steps.rewrite.outputs.error_b64 }}',
+                'base64'
+              ).toString('utf8');
+              body =
+                '## Merge commit sync\n\n❌ Could not update `' +
+                baseRef +
+                '`: `' +
+                err +
+                '`\n\n`OPENKERNEL_REPO_PAT` needs **Contents: Read and write** on this repo (and bypass on protected `main`). ' +
+                'Comments do not use the PAT. Or paste from **Merge commit message (saved)** into **Squash and merge**.';
+            }
+
+            const text = statusMarker + '\n' + body;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber,
+            });
+            const existing = comments.find(
+              (c) => c.user.type === 'Bot' && c.body && c.body.includes(statusMarker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: text,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body: text,
+              });
+            }
