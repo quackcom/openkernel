@@ -79,6 +79,63 @@ jobs:
               collabNote = '\n\n_Could not read `.github/COLLABORATORS` for majority policy._';
             }
 
+            const stripHtmlComments = (text) =>
+              (text || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            const extractSummaryForMerge = (body) => {
+              const visible = stripHtmlComments(body);
+              const match = visible.match(
+                /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+              );
+              if (!match) return '';
+              return match[1]
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .split('\n')
+                .map((line) => line.trimEnd())
+                .filter((line) => line.trim().length > 0)
+                .join('\n')
+                .trim();
+            };
+
+            const cleanPrTitleForMerge = (raw) =>
+              (raw || '')
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .replace(/^\[Pull Request #\d+\]\s*/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            let mergeFlagPreview = '';
+            const prTitle = pr.title || '';
+            const prBody = pr.body || '';
+            const summaryVisible = stripHtmlComments(
+              (prBody.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+            );
+            const useMergeTitle =
+              /\[USE_PR_TITLE\]/i.test(prTitle) ||
+              /\[USE_PR_TITLE\]/i.test(summaryVisible);
+            const useMergeDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
+            if (useMergeTitle || useMergeDesc) {
+              mergeFlagPreview = '\n\n### Planned merge commit (from PR flags)\n\n';
+              if (useMergeTitle) {
+                mergeFlagPreview +=
+                  `**Subject:** \`${cleanPrTitleForMerge(prTitle)}\`\n\n`;
+              }
+              if (useMergeDesc) {
+                const desc = extractSummaryForMerge(prBody);
+                if (desc) {
+                  mergeFlagPreview += `**Body:**\n\`\`\`\n${desc}\n\`\`\`\n\n`;
+                } else {
+                  mergeFlagPreview +=
+                    '_`[USE_PR_DESC]` set but Summary is empty after markers._\n\n';
+                }
+              }
+              mergeFlagPreview +=
+                'After merge, workflow **Sync merge commit** applies this on `main` if secret `OPENKERNEL_REPO_PAT` is set (admin PAT). ' +
+                'Otherwise **copy** subject/body into the **Squash and merge** dialog.\n';
+            }
+
             // AI-generated merge commit suggestion via NVIDIA NIM
             let aiSuggestion = '';
             const nimKey = process.env.NVIDIA_NIM_KEY;
@@ -162,6 +219,7 @@ jobs:
               `| Author | @${pr.user.login} |\n\n` +
               `### Files by area\n${fileList || '_No files_'}` +
               collabNote +
+              mergeFlagPreview +
               `\n\n---\n` +
               aiSuggestion +
               `_Optional: use GitHub Copilot or another AI review tool for deeper code review. ` +

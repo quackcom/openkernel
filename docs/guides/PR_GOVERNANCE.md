@@ -141,7 +141,28 @@ Recommended: keep **branch protection** (at least 1 approval) **and** use the wo
 
 For openkernel, prefer: **bot comments + label → human collaborator clicks Merge**.
 
+### Merge commit title and description
 
+Put flags on the **PR before merging** (they are **not** kept in the final commit).
+
+| Flag | Where | Merge commit gets |
+|------|--------|-------------------|
+| `[USE_PR_TITLE]` | PR **title** or visible **Summary** line | **Subject** (markers and `[Pull Request #N]` removed) |
+| `[USE_PR_DESC]` | **Summary** section only (not inside `<!-- comments -->`) | **Body** = Summary text only |
+
+The **PR governance** comment shows **Planned merge commit** while the PR is open. After merge, **Sync merge commit** tries to update `main`.
+
+#### If you cannot add "GitHub Actions" to the ruleset bypass list
+
+`GITHUB_TOKEN` often cannot push to protected `main`. Use one of these:
+
+| Option | What to do |
+|--------|------------|
+| **A. Admin PAT (recommended for automation)** | 1. GitHub → **Settings → Developer settings → Fine-grained personal access tokens** → token scoped to `openkernel` with **Contents: Read and write**.<br>2. Token owner must be on the ruleset **Bypass list** as **Repository admin** (your user — **not** the "GitHub Actions" app).<br>3. Repo → **Settings → Secrets and variables → Actions** → `OPENKERNEL_REPO_PAT` = that token.<br>4. After merge, **Sync merge commit** runs; or re-run it with the PR number. |
+| **B. Manual merge dialog** | On **Squash and merge**, edit the message and paste **Subject** / **Body** from **Planned merge commit** in the PR comment. No PAT, no bypass for Actions. |
+| **C. AI hint only** | Set `NVIDIA_NIM_KEY` for an extra suggested title/body in the PR summary (optional; still paste manually when merging). |
+
+You do **not** need to add the **GitHub Actions** app to bypass if you use **A** or **B**.
 
 ## Assigning PRs to people
 

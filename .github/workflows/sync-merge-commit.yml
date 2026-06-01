@@ -1,0 +1,261 @@
+# After merge: rewrite the squash/merge commit on main when [USE_PR_TITLE] / [USE_PR_DESC] are set.
+#
+# Protected-branch note: GITHUB_TOKEN often cannot update main. Use a repo admin PAT instead:
+#   Settings → Secrets → Actions → OPENKERNEL_REPO_PAT
+#   (fine-grained PAT from an admin on the ruleset bypass list — NOT "GitHub Actions")
+
+name: Sync merge commit
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Merged PR number to sync (retry after setting OPENKERNEL_REPO_PAT)'
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync merge commit message from PR flags
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.OPENKERNEL_REPO_PAT || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const marker = '<!-- sync-merge-commit-status -->';
+            const usedPat = Boolean(process.env.OPENKERNEL_REPO_PAT);
+
+            const postStatus = async (prNumber, body) => {
+              const text = marker + '\n' + body;
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: prNumber,
+              });
+              const existing = comments.find(
+                (c) => c.user.type === 'Bot' && c.body && c.body.includes(marker)
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: text,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: text,
+                });
+              }
+            };
+
+            const stripHtmlComments = (text) =>
+              (text || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            const extractSummary = (body) => {
+              const visible = stripHtmlComments(body);
+              const match = visible.match(
+                /^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im
+              );
+              if (!match) return '';
+              return match[1]
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .split('\n')
+                .map((line) => line.trimEnd())
+                .filter((line) => line.trim().length > 0)
+                .join('\n')
+                .trim();
+            };
+
+            const cleanPrTitle = (raw) =>
+              (raw || '')
+                .replace(/\[USE_PR_TITLE\]/gi, '')
+                .replace(/\[USE_PR_DESC\]/gi, '')
+                .replace(/^\[Pull Request #\d+\]\s*/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            let prNumber;
+            if (context.eventName === 'workflow_dispatch') {
+              prNumber = Number(context.payload.inputs.pr_number);
+            } else {
+              const payloadPr = context.payload.pull_request;
+              if (!payloadPr.merged) {
+                core.info('PR closed without merge; skipping.');
+                return;
+              }
+              prNumber = payloadPr.number;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (!pr.merged) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ Skipped: this PR is not merged.'
+              );
+              core.setFailed('PR is not merged.');
+              return;
+            }
+
+            const title = pr.title || '';
+            const body = pr.body || '';
+            const summaryVisible = stripHtmlComments(
+              (body.match(/^##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s|\s*$)/im) || ['', ''])[1]
+            );
+
+            const useTitle =
+              /\[USE_PR_TITLE\]/i.test(title) ||
+              /\[USE_PR_TITLE\]/i.test(summaryVisible);
+            const useDesc = /\[USE_PR_DESC\]/i.test(summaryVisible);
+
+            if (!useTitle && !useDesc) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n⏭️ Skipped: no `[USE_PR_TITLE]` (PR title or visible Summary) ' +
+                  'and no `[USE_PR_DESC]` in the **Summary** section.\n\n' +
+                  'Flags are removed from the final commit; they only control the sync.'
+              );
+              return;
+            }
+
+            const cleanTitle = useTitle ? cleanPrTitle(title) : null;
+            const cleanDesc = useDesc ? extractSummary(body) : null;
+
+            if (useTitle && !cleanTitle) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ `[USE_PR_TITLE]` would produce an empty commit subject.'
+              );
+              core.setFailed('Empty commit subject.');
+              return;
+            }
+
+            const mergeSha = pr.merge_commit_sha;
+            if (!mergeSha) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ No `merge_commit_sha` on this PR.'
+              );
+              core.setFailed('No merge_commit_sha.');
+              return;
+            }
+
+            const baseRef = pr.base.ref;
+            let refSha = null;
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              const { data: ref } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+              });
+              refSha = ref.object.sha;
+              if (refSha === mergeSha) break;
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+
+            if (refSha !== mergeSha) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Merge commit is not the tip of `' +
+                  baseRef +
+                  '`. Another commit landed first; retry manually when `main` is stable.'
+              );
+              return;
+            }
+
+            const { data: commit } = await github.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: mergeSha,
+            });
+
+            const lines = commit.message.split('\n');
+            const curTitle = lines[0] || '';
+            const curBody = lines.slice(1).join('\n').replace(/^\n+/, '');
+
+            const newTitle = cleanTitle !== null ? cleanTitle : curTitle;
+            const newBody = useDesc && cleanDesc ? cleanDesc : curBody;
+            const newMessage = newBody ? `${newTitle}\n\n${newBody}` : newTitle;
+
+            if (newMessage === commit.message) {
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ Commit message already matches PR flags.'
+              );
+              return;
+            }
+
+            try {
+              const { data: newCommit } = await github.rest.git.createCommit({
+                owner,
+                repo,
+                message: newMessage,
+                tree: commit.tree.sha,
+                parents: commit.parents.map((p) => p.sha),
+              });
+
+              await github.rest.git.updateRef({
+                owner,
+                repo,
+                ref: `heads/${baseRef}`,
+                sha: newCommit.sha,
+                force: true,
+              });
+
+              const authNote = usedPat
+                ? 'Used `OPENKERNEL_REPO_PAT` (admin PAT).'
+                : 'Used default `GITHUB_TOKEN` (if this failed before, add `OPENKERNEL_REPO_PAT`).';
+
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n✅ Updated `' +
+                  baseRef +
+                  '` merge commit:\n\n```\n' +
+                  newMessage +
+                  '\n```\n\n' +
+                  authNote +
+                  '\n\n(Flags are **not** kept in the commit.)'
+              );
+            } catch (e) {
+              const patHelp =
+                '### Fix without adding "GitHub Actions" to bypass\n\n' +
+                '1. On GitHub: **Settings → Developer settings → Fine-grained tokens** → generate a token for this repo with **Contents: Read and write**.\n' +
+                '2. The token owner must be a **repository admin** on the ruleset **Bypass list** (e.g. **Repository admins**).\n' +
+                '3. **Settings → Secrets and variables → Actions** → New secret: `OPENKERNEL_REPO_PAT` = that token.\n' +
+                '4. Re-run **Actions → Sync merge commit** with PR #' +
+                prNumber +
+                '.\n\n' +
+                '**Or** when merging: choose **Squash and merge** and paste the subject/body from the **Planned merge commit** section in the PR summary comment.\n';
+
+              await postStatus(
+                prNumber,
+                '## Merge commit sync\n\n❌ Could not update `' +
+                  baseRef +
+                  '`: `' +
+                  e.message +
+                  '`.\n\n' +
+                  patHelp
+              );
+              core.setFailed(e.message);
+            }
+        env:
+          OPENKERNEL_REPO_PAT: ${{ secrets.OPENKERNEL_REPO_PAT }}
