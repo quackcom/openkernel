@@ -183,53 +183,80 @@ jobs:
         id: rewrite
         if: steps.prepare.outputs.rewrite_b64 != ''
         uses: actions/github-script@v7
+        env:
+          OPENKERNEL_REPO_PAT: ${{ secrets.OPENKERNEL_REPO_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          github-token: ${{ secrets.OPENKERNEL_REPO_PAT || github.token }}
           script: |
             const rewrite = JSON.parse(
               Buffer.from('${{ steps.prepare.outputs.rewrite_b64 }}', 'base64').toString('utf8')
             );
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const usedPat = Boolean(process.env.OPENKERNEL_REPO_PAT);
 
-            try {
-              const { data: newCommit } = await github.rest.git.createCommit({
-                owner,
-                repo,
-                message: rewrite.newMessage,
-                tree: rewrite.treeSha,
-                parents: rewrite.parentShas,
+            const attempts = [];
+            if (process.env.OPENKERNEL_REPO_PAT) {
+              attempts.push({
+                label: 'OPENKERNEL_REPO_PAT',
+                token: process.env.OPENKERNEL_REPO_PAT,
               });
+            }
+            attempts.push({
+              label: 'GITHUB_TOKEN',
+              token: process.env.GITHUB_TOKEN,
+            });
 
-              await github.rest.git.updateRef({
-                owner,
-                repo,
-                ref: `heads/${rewrite.baseRef}`,
-                sha: newCommit.sha,
-                force: true,
-              });
+            let lastErr = null;
+            let tokenUsed = '';
 
-              core.setOutput('ok', 'true');
-              core.setOutput('used_pat', usedPat ? 'true' : 'false');
-              core.setOutput('pr_number', String(rewrite.prNumber));
-              core.setOutput('base_ref', rewrite.baseRef);
-              core.setOutput(
-                'new_message_b64',
-                Buffer.from(rewrite.newMessage, 'utf8').toString('base64')
-              );
-            } catch (e) {
+            for (const { label, token } of attempts) {
+              const octokit = github.getOctokit(token);
+              try {
+                const { data: newCommit } = await octokit.rest.git.createCommit({
+                  owner,
+                  repo,
+                  message: rewrite.newMessage,
+                  tree: rewrite.treeSha,
+                  parents: rewrite.parentShas,
+                });
+
+                await octokit.rest.git.updateRef({
+                  owner,
+                  repo,
+                  ref: `heads/${rewrite.baseRef}`,
+                  sha: newCommit.sha,
+                  force: true,
+                });
+
+                tokenUsed = label;
+                core.setOutput('ok', 'true');
+                core.setOutput('used_pat', label === 'OPENKERNEL_REPO_PAT' ? 'true' : 'false');
+                core.setOutput('token_used', label);
+                core.setOutput('pr_number', String(rewrite.prNumber));
+                core.setOutput('base_ref', rewrite.baseRef);
+                core.setOutput(
+                  'new_message_b64',
+                  Buffer.from(rewrite.newMessage, 'utf8').toString('base64')
+                );
+                core.info(`Rewrote ${rewrite.baseRef} using ${label}.`);
+                lastErr = null;
+                break;
+              } catch (e) {
+                lastErr = e;
+                core.warning(`Rewrite with ${label} failed: ${e.message}`);
+              }
+            }
+
+            if (lastErr) {
               core.setOutput('ok', 'false');
               core.setOutput('pr_number', String(rewrite.prNumber));
               core.setOutput('base_ref', rewrite.baseRef);
               core.setOutput(
                 'error_b64',
-                Buffer.from(String(e.message), 'utf8').toString('base64')
+                Buffer.from(String(lastErr.message), 'utf8').toString('base64')
               );
-              core.setFailed(e.message);
+              core.setFailed(lastErr.message);
             }
-        env:
-          OPENKERNEL_REPO_PAT: ${{ secrets.OPENKERNEL_REPO_PAT }}
 
       - name: Post rewrite result (Actions bot)
         if: steps.rewrite.outcome != 'skipped'
@@ -270,7 +297,13 @@ jobs:
                 baseRef +
                 '`: `' +
                 err +
-                '`\n\n`OPENKERNEL_REPO_PAT` needs **Contents: Read and write** on this repo (and bypass on protected `main`). ' +
+                '`\n\n' +
+                (err.includes('personal access token')
+                  ? '**PAT fix:** Regenerate a **fine-grained** token for **`quackcom/openkernel`** with **Contents: Read and write** (Repository access must include this repo). ' +
+                    'Set repo secret `OPENKERNEL_REPO_PAT` to that token. Token owner must be a **repo admin** on the ruleset **Bypass list** (your user, not the GitHub Actions app). ' +
+                    'Or delete the secret to try `GITHUB_TOKEN` only, or paste from **Merge commit message (saved)** at squash time.\n\n'
+                  : '') +
+                '`OPENKERNEL_REPO_PAT` needs **Contents: Read and write** on this repo (and bypass on protected `main`). ' +
                 'Comments do not use the PAT. Or paste from **Merge commit message (saved)** into **Squash and merge**.';
             }
 
